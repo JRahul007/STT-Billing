@@ -1,0 +1,16 @@
+{
+  "name": "logistics-management",
+  "version": "1.0.0",
+  "description": "Full-stack logistics management system",
+  "scripts": {
+    "server": "cd server && node index.js",
+    "server:dev": "cd server && npx nodemon index.js",
+    "client": "cd client && npx vite",
+    "client:build": "cd client && npx vite build",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "dev": "concurrently \"npm run server:dev\" \"npm run client\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

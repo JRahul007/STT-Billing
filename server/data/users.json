@@ -1,0 +1,11 @@
+[
+  {
+    "id": 1,
+    "full_name": "Rahul Jangale",
+    "email": "rjangale69@gmail.com",
+    "password": "$2b$10$VqFDFUSm/8VscKb9ztzf3ePAg6pOW6lWIZbTmnpJ4y3jA11huQtNO",
+    "reset_token": "975789",
+    "reset_token_expiry": "2026-04-02T08:27:49.130Z",
+    "created_at": "2026-04-02T07:53:11.851Z"
+  }
+]

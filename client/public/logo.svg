@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f7850a"/>
+      <stop offset="100%" stop-color="#e06800"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4355db"/>
+      <stop offset="100%" stop-color="#2d3cb8"/>
+    </linearGradient>
+    <linearGradient id="brown" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#9b3e1c"/>
+      <stop offset="100%" stop-color="#6d2b12"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Orange rounded square background -->
+  <rect width="200" height="200" rx="40" fill="url(#bg)"/>
+
+  <!-- Blue outer C-arc (left open) -->
+  <circle cx="72" cy="100" r="60" fill="none" stroke="url(#blue)" stroke-width="13" stroke-dasharray="310 68" stroke-dashoffset="-34" stroke-linecap="round"/>
+
+  <!-- Brown inner C-arc (right open, opposite) -->
+  <circle cx="72" cy="100" r="46" fill="none" stroke="url(#brown)" stroke-width="9" stroke-dasharray="230 60" stroke-dashoffset="80" stroke-linecap="round"/>
+
+  <!-- STT bold italic text -->
+  <text x="105" y="120" text-anchor="middle" font-family="'Arial Black', 'Segoe UI Black', Arial, sans-serif" font-size="52" font-weight="900" font-style="italic" fill="#ffffff" letter-spacing="2">STT</text>
+</svg>
