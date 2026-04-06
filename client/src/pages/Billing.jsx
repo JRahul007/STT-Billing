@@ -888,6 +888,47 @@ export default function Billing() {
     pdf.save(`Invoice_${b.invoice_no}_${dateStr || "draft"}.pdf`);
   };
 
+  const handleDownloadInvoice = (b) => {
+    const parsed = parseLocation(b.location);
+    const route = parsed.route || b.location || "";
+    const clientName = parsed.client || "";
+    const extraItems = getExtraChargeItems(b);
+    const extraTotal = extraItems.reduce((s, ec) => s + ec.amount, 0);
+    const totalAmt = Number(b.total_amount) || 0;
+    const wt = Number(b.weight) || 0;
+    const weightAmt = totalAmt - extraTotal > 0 ? totalAmt - extraTotal : totalAmt;
+    const ratePerKg = wt > 0 ? Math.round(weightAmt / wt) : 0;
+
+    // Map billing data to InvoiceCreate format
+    const invoiceData = {
+      invoice_no: b.invoice_no || "",
+      date: b.date ? b.date.split("T")[0] : "",
+      route: route,
+      client_name: clientName,
+      client_address: "",
+      client_phone: "",
+      weight: String(wt),
+      boxes: String(b.boxes || "1"),
+      contain: "water\nsample",
+      rate_per_kg: String(ratePerKg),
+      box_rate: String(b.box_rate || "150"),
+      show_packaging: b.show_packaging || false,
+      show_oda: b.show_oda || false,
+      oda_location: b.oda_location || "Bhosri",
+      oda_person: b.oda_person || "Ankit P",
+      oda_amount: String(b.oda_amount || "600"),
+      show_pickup: b.show_pickup || false,
+      pickup_entries: b.pickup_entries || [],
+      pickup_rate: String(b.pickup_rate || "600"),
+      show_other: b.show_other || false,
+      other_desc: b.other_desc || "",
+      other_amount: String(b.other_amount || ""),
+    };
+
+    localStorage.setItem("open_invoice", JSON.stringify(invoiceData));
+    navigate("/invoice/create?autodownload=" + b.invoice_no);
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -1078,7 +1119,7 @@ export default function Billing() {
                     <div className="btn-group" style={{ flexWrap: "wrap" }}>
                       <button className="btn btn-sm btn-secondary" onClick={() => handleEdit(b)}>Edit</button>
                       <button className="btn btn-sm btn-danger" onClick={() => handleDelete(b.id, b.invoice_no)}>Delete</button>
-                      <button className="btn btn-sm" style={{ background: "#4361ee", color: "#fff" }} onClick={() => downloadInvoicePDF(b)}>Download Invoice</button>
+                      <button className="btn btn-sm" style={{ background: "#4361ee", color: "#fff" }} onClick={() => handleDownloadInvoice(b)}>Download Invoice</button>
                     </div>
                   </td>
                 </tr>

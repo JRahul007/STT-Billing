@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import JsBarcode from "jsbarcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -27,6 +28,9 @@ const getNextInvoiceNo = () => {
 const saveInvoiceNo = (num) => localStorage.setItem("invoice_counter", String(num));
 
 export default function InvoiceCreate() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const autoDownload = searchParams.get("autodownload");
   const [locations, setLocations] = useState(() => {
     const saved = localStorage.getItem("billing_locations");
     return saved ? JSON.parse(saved) : [...defaultLocations];
@@ -146,6 +150,20 @@ export default function InvoiceCreate() {
     }
   }, [inv.invoice_no]);
 
+  // Auto-download PDF when navigated from Billing with ?autodownload param
+  const autoDownloadDone = useRef(false);
+  useEffect(() => {
+    if (autoDownload && inv.invoice_no && !autoDownloadDone.current) {
+      autoDownloadDone.current = true;
+      // Wait for barcode and layout to fully render
+      const timer = setTimeout(async () => {
+        await downloadPDF();
+        navigate("/billing", { replace: true });
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [autoDownload, inv.invoice_no]);
+
   const addRoute = () => {
     const val = newLocation.trim().toUpperCase();
     if (val && !locations.includes(val)) {
@@ -158,22 +176,34 @@ export default function InvoiceCreate() {
   };
 
   const saveInvoiceToList = () => {
+    const existing = JSON.parse(localStorage.getItem("invoices") || "[]");
+    const idx = existing.findIndex((e) => e.invoice_no === inv.invoice_no);
+    const prev = idx >= 0 ? existing[idx] : {};
     const entry = {
-      id: Date.now(),
+      ...prev,
+      id: prev.id || Date.now(),
       invoice_no: inv.invoice_no,
       date: inv.date,
       location: inv.route + (inv.client_name ? `(${inv.client_name})` : ""),
       weight: weight,
       total_amount: totalAmount,
-      bom_expense: "",
-      bom_exp_description: "",
-      other_expense: "",
-      other_exp_description: "",
-      payment_status: "NOTPAID",
+      // Extra charges fields
+      show_packaging: inv.show_packaging || false,
+      boxes: inv.boxes || "1",
+      box_rate: inv.box_rate || "150",
+      show_oda: inv.show_oda || false,
+      oda_location: inv.oda_location || "",
+      oda_person: inv.oda_person || "",
+      oda_amount: inv.oda_amount || "",
+      show_pickup: inv.show_pickup || false,
+      pickup_entries: inv.pickup_entries || [],
+      pickup_rate: inv.pickup_rate || "600",
+      show_other: inv.show_other || false,
+      other_desc: inv.other_desc || "",
+      other_amount: inv.other_amount || "",
+      payment_status: prev.payment_status || "NOTPAID",
       invoice_data: JSON.stringify({ ...inv, stamp_image: stampImg }),
     };
-    const existing = JSON.parse(localStorage.getItem("invoices") || "[]");
-    const idx = existing.findIndex((e) => e.invoice_no === inv.invoice_no);
     if (idx >= 0) existing[idx] = entry;
     else existing.unshift(entry);
     localStorage.setItem("invoices", JSON.stringify(existing));
@@ -581,7 +611,7 @@ export default function InvoiceCreate() {
               <td className="lbl" style={{ textAlign: "center" }}>Contain</td>
               <td className="lbl" style={{ textAlign: "center" }}>Weight</td>
               <td className="lbl" style={{ textAlign: "center" }}>Rate/kg</td>
-              <td className="lbl" style={{ textAlign: "right" }}>Amount</td>
+              <td className="lbl" style={{ textAlign: "center" }}>Amount</td>
             </tr>
 
             {/* --- SERVICE DESCRIPTION --- */}
@@ -613,12 +643,12 @@ export default function InvoiceCreate() {
                 <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 12, textAlign: "center" }}
                   rows={2} value={inv.contain} onChange={(e) => setInv({ ...inv, contain: e.target.value })} />
               </td>
-              <td style={{ textAlign: "right", verticalAlign: "middle", fontWeight: "bold" }}>{weight || ""}</td>
-              <td style={{ textAlign: "right", verticalAlign: "middle" }}>
-                <input className="edt" type="number" step="1" style={{ ...edt, width: 50, textAlign: "right" }}
+              <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold" }}>{weight || ""}</td>
+              <td style={{ textAlign: "center", verticalAlign: "middle" }}>
+                <input className="edt" type="number" step="1" style={{ ...edt, width: 50, textAlign: "center" }}
                   value={inv.rate_per_kg} onChange={(e) => setInv({ ...inv, rate_per_kg: e.target.value })} />
               </td>
-              <td style={{ textAlign: "right", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
+              <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                 {weightAmount > 0 ? weightAmount.toFixed(0) : ""}
               </td>
             </tr>
@@ -630,7 +660,7 @@ export default function InvoiceCreate() {
                   <strong>Box &amp; Packaging ({boxes}-Box)</strong>
                 </td>
                 <td></td><td></td><td></td><td></td>
-                <td style={{ textAlign: "right", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
+                <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {packagingAmount > 0 ? packagingAmount.toFixed(0) : ""}
                 </td>
               </tr>
@@ -643,7 +673,7 @@ export default function InvoiceCreate() {
                   <strong>{inv.oda_location} Pickup-ODA Location ({inv.oda_person})</strong>
                 </td>
                 <td></td><td></td><td></td><td></td>
-                <td style={{ textAlign: "right", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
+                <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {odaAmount > 0 ? odaAmount.toFixed(0) : ""}
                 </td>
               </tr>
@@ -656,7 +686,7 @@ export default function InvoiceCreate() {
                   <strong>Pickup Charges ({name})</strong>
                 </td>
                 <td></td><td></td><td></td><td></td>
-                <td style={{ textAlign: "right", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
+                <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {pickupRate}
                 </td>
               </tr>
@@ -669,7 +699,7 @@ export default function InvoiceCreate() {
                   <strong>{inv.other_desc}</strong>
                 </td>
                 <td></td><td></td><td></td><td></td>
-                <td style={{ textAlign: "right", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
+                <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {otherAmount > 0 ? otherAmount.toFixed(0) : ""}
                 </td>
               </tr>
@@ -685,7 +715,7 @@ export default function InvoiceCreate() {
               <td colSpan={5} style={{ fontWeight: "bold", fontSize: 14, borderTop: "2px solid #222", padding: "8px 10px" }}>
                 Total
               </td>
-              <td style={{ textAlign: "right", fontWeight: "bold", fontSize: 16, borderTop: "2px solid #222", padding: "8px 10px", color: "#b71c1c" }}>
+              <td style={{ textAlign: "center", fontWeight: "bold", fontSize: 16, borderTop: "2px solid #222", padding: "8px 10px", color: "#b71c1c" }}>
                 {totalAmount > 0 ? `\u20B9 ${totalAmount.toFixed(2)}` : ""}
               </td>
             </tr>
@@ -732,7 +762,7 @@ export default function InvoiceCreate() {
                   <div><span style={{ color: "#555" }}>Account Holder:</span> <strong>Swati Tours and Transport</strong></div>
                   <div><span style={{ color: "#555" }}>Account No:</span> <strong>061320110001257</strong></div>
                   <div><span style={{ color: "#555" }}>IFSC:</span> <strong>BKID0000613</strong></div>
-                  <div><span style={{ color: "#555" }}>Branch:</span> <strong>Uttam Nagar, Pune</strong></div>
+                  <div><span style={{ color: "#555" }}>Branch:</span> <strong>Vishrantwadi, Pune</strong></div>
                 </div>
               </td>
             </tr>
