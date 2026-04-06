@@ -5,6 +5,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import html2canvas from "html2canvas";
 import { getBillings, createBilling, updateBilling, deleteBilling } from "../services/api";
+import defaultStamp from "../defaultStamp";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -590,7 +591,7 @@ export default function Billing() {
     } catch (e) { /* ignore */ }
 
     // Get stamp from localStorage
-    const stampBase64 = localStorage.getItem("stamp_image") || "";
+    const stampBase64 = localStorage.getItem("stamp_image") || defaultStamp;
 
     const invoiceHTML = `<!DOCTYPE html>
 <html>
@@ -755,7 +756,7 @@ export default function Billing() {
       barcodeDataUrl = barcodeCanvas.toDataURL("image/png");
     } catch (e) { /* ignore */ }
 
-    const stampBase64 = localStorage.getItem("stamp_image") || "";
+    const stampBase64 = localStorage.getItem("stamp_image") || defaultStamp;
 
     // Create hidden container for invoice rendering
     const container = document.createElement("div");

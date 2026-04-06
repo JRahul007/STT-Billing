@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import JsBarcode from "jsbarcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import defaultStamp from "../defaultStamp";
 
 const defaultLocations = ["BOM-PUNE", "PUNE-BOM", "BOM-GOA", "GOA-BOM", "IDR-BOM", "BOM-IDR"];
 
@@ -35,25 +36,10 @@ export default function InvoiceCreate() {
   const [stampImg, setStampImg] = useState("");
   const stampInputRef = useRef(null);
 
-  // Load stamp: localStorage first, then fallback to /stamp.png
+  // Load stamp: localStorage first, then fallback to default stamp
   useEffect(() => {
     const saved = localStorage.getItem("stamp_image");
-    if (saved) {
-      setStampImg(saved);
-    } else {
-      // Try loading default stamp from public folder
-      fetch("/stamp.png")
-        .then((res) => { if (res.ok) return res.blob(); throw new Error("no stamp"); })
-        .then((blob) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            setStampImg(reader.result);
-            localStorage.setItem("stamp_image", reader.result);
-          };
-          reader.readAsDataURL(blob);
-        })
-        .catch(() => { /* no default stamp available */ });
-    }
+    setStampImg(saved || defaultStamp);
   }, []);
 
   const handleStampUpload = (e) => {
