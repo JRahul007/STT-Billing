@@ -186,7 +186,7 @@ export default function InvoiceCreate() {
       date: inv.date,
       location: inv.route + (inv.client_name ? `(${inv.client_name})` : ""),
       weight: weight,
-      total_amount: totalAmount,
+      total_amount: Math.round(totalAmount),
       // Extra charges fields
       show_packaging: inv.show_packaging || false,
       boxes: inv.boxes || "1",
@@ -314,9 +314,9 @@ export default function InvoiceCreate() {
       `}</style>
 
       {/* ===== TOOLBAR ===== */}
-      <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700 }}>Create Invoice</h1>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <input
             style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 8, fontSize: 13, width: 180 }}
             placeholder="Add route e.g. NGP-BOM"
@@ -510,6 +510,7 @@ export default function InvoiceCreate() {
       </div>
 
       {/* ===== INVOICE ===== */}
+      <div className="inv-scroll-wrap" style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <div className="inv-page" ref={invoiceRef} style={{ position: "relative" }}>
         {/* Watermark logo - full background */}
         <div style={{
@@ -769,6 +770,7 @@ export default function InvoiceCreate() {
 
           </tbody>
         </table>
+      </div>
       </div>
     </div>
   );

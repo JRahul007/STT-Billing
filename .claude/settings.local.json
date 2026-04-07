@@ -4,7 +4,12 @@
       "Bash(curl -s http://localhost:5000/api/billings)",
       "Bash(sc query:*)",
       "Bash(net start:*)",
-      "Bash(timeout 5 node index.js)"
+      "Bash(timeout 5 node index.js)",
+      "Bash(node -e ':*)",
+      "Bash(grep -r \"width\\\\|height\\\\|px\\\\|max-width\" src/pages/*.jsx)",
+      "Bash(grep -n \"250px\\\\|500px\\\\|420px\\\\|800px\\\\|780px\" src/index.css src/pages/*.jsx src/App.jsx)",
+      "Bash(netstat -ano)",
+      "Bash(node -e \"require\\('./config/db'\\); console.log\\('OK'\\);\")"
     ]
   }
 }

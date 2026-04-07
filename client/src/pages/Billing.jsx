@@ -73,44 +73,6 @@ function getExtraChargeItems(b) {
   return items;
 }
 
-const sampleBillings = [
-  { invoice_no: "1666", date: "2026-03-15", location: "BOM-GOA", weight: 10, total_amount: 500, bom_expense: 100, bom_exp_description: "ytest", other_expense: 200, other_exp_description: "test", payment_status: "PAID" },
-  { invoice_no: "1667", date: "2026-01-10", location: "BOM-PUNE", weight: 25, total_amount: 105000, bom_expense: 8000, bom_exp_description: "Transport fuel", other_expense: 3500, other_exp_description: "Loading charges", payment_status: "PAID" },
-  { invoice_no: "1668", date: "2026-01-22", location: "PUNE-BOM", weight: 18, total_amount: 78000, bom_expense: 6500, bom_exp_description: "Diesel", other_expense: 2000, other_exp_description: "Toll charges", payment_status: "PAID" },
-  { invoice_no: "1669", date: "2026-02-05", location: "BOM-PUNE", weight: 30, total_amount: 125000, bom_expense: 9500, bom_exp_description: "Fuel + driver", other_expense: 4000, other_exp_description: "Packaging", payment_status: "PAID" },
-  { invoice_no: "1670", date: "2026-02-18", location: "PUNE-BOM", weight: 22, total_amount: 95000, bom_expense: 7200, bom_exp_description: "Transport", other_expense: 3000, other_exp_description: "Handling", payment_status: "NOTPAID" },
-  { invoice_no: "1671", date: "2026-03-08", location: "BOM-PUNE", weight: 15, total_amount: 68000, bom_expense: 5500, bom_exp_description: "Fuel charges", other_expense: 2500, other_exp_description: "Labour", payment_status: "PAID" },
-  { invoice_no: "1672", date: "2026-03-25", location: "PUNE-BOM", weight: 28, total_amount: 132000, bom_expense: 10000, bom_exp_description: "Diesel + toll", other_expense: 5000, other_exp_description: "Warehouse", payment_status: "NOTPAID" },
-  { invoice_no: "1673", date: "2026-04-02", location: "BOM-PUNE", weight: 20, total_amount: 89000, bom_expense: 7000, bom_exp_description: "Transport fuel", other_expense: 3200, other_exp_description: "Loading", payment_status: "PAID" },
-  { invoice_no: "1674", date: "2026-01-15", location: "BOM-GOA", weight: 12, total_amount: 55000, bom_expense: 4500, bom_exp_description: "Fuel", other_expense: 2000, other_exp_description: "Toll", payment_status: "PAID" },
-  { invoice_no: "1675", date: "2026-02-12", location: "GOA-BOM", weight: 8, total_amount: 42000, bom_expense: 3800, bom_exp_description: "Diesel", other_expense: 1500, other_exp_description: "Loading", payment_status: "PAID" },
-  { invoice_no: "1676", date: "2026-03-20", location: "BOM-GOA", weight: 16, total_amount: 72000, bom_expense: 6000, bom_exp_description: "Transport", other_expense: 2800, other_exp_description: "Packaging", payment_status: "NOTPAID" },
-  { invoice_no: "1677", date: "2026-04-01", location: "GOA-BOM", weight: 14, total_amount: 63000, bom_expense: 5200, bom_exp_description: "Fuel + toll", other_expense: 2200, other_exp_description: "Handling", payment_status: "PAID" },
-  { invoice_no: "1678", date: "2026-01-08", location: "IDR-BOM", weight: 35, total_amount: 145000, bom_expense: 11000, bom_exp_description: "Long route fuel", other_expense: 5500, other_exp_description: "Loading + toll", payment_status: "PAID" },
-  { invoice_no: "1679", date: "2026-02-20", location: "BOM-IDR", weight: 40, total_amount: 168000, bom_expense: 12500, bom_exp_description: "Diesel + driver", other_expense: 6000, other_exp_description: "Warehouse + handling", payment_status: "NOTPAID" },
-  { invoice_no: "1680", date: "2026-03-12", location: "IDR-BOM", weight: 30, total_amount: 130000, bom_expense: 10500, bom_exp_description: "Transport fuel", other_expense: 4800, other_exp_description: "Labour charges", payment_status: "PAID" },
-  { invoice_no: "1681", date: "2026-04-01", location: "BOM-IDR", weight: 38, total_amount: 155000, bom_expense: 12000, bom_exp_description: "Fuel + toll", other_expense: 5500, other_exp_description: "Packaging", payment_status: "PAID" },
-  { invoice_no: "1682", date: "2026-05-10", location: "BOM-PUNE", weight: 24, total_amount: 98000, bom_expense: 7800, bom_exp_description: "Transport", other_expense: 3500, other_exp_description: "Loading", payment_status: "NOTPAID" },
-  { invoice_no: "1683", date: "2026-06-15", location: "BOM-GOA", weight: 19, total_amount: 82000, bom_expense: 6800, bom_exp_description: "Diesel", other_expense: 3000, other_exp_description: "Toll + handling", payment_status: "PAID" },
-  { invoice_no: "1684", date: "2026-07-20", location: "IDR-BOM", weight: 33, total_amount: 140000, bom_expense: 11500, bom_exp_description: "Long haul fuel", other_expense: 5200, other_exp_description: "Warehouse", payment_status: "PAID" },
-  { invoice_no: "1685", date: "2026-08-05", location: "PUNE-BOM", weight: 27, total_amount: 115000, bom_expense: 9000, bom_exp_description: "Fuel charges", other_expense: 4000, other_exp_description: "Labour", payment_status: "NOTPAID" },
-  { invoice_no: "1686", date: "2026-09-18", location: "GOA-BOM", weight: 11, total_amount: 48000, bom_expense: 4000, bom_exp_description: "Transport", other_expense: 1800, other_exp_description: "Packaging", payment_status: "PAID" },
-  { invoice_no: "1687", date: "2026-10-22", location: "BOM-IDR", weight: 42, total_amount: 175000, bom_expense: 13000, bom_exp_description: "Diesel + driver", other_expense: 6500, other_exp_description: "Loading + toll", payment_status: "PAID" },
-  { invoice_no: "1688", date: "2026-11-10", location: "BOM-PUNE", weight: 21, total_amount: 92000, bom_expense: 7500, bom_exp_description: "Fuel", other_expense: 3300, other_exp_description: "Handling", payment_status: "NOTPAID" },
-  { invoice_no: "1689", date: "2026-12-05", location: "BOM-GOA", weight: 17, total_amount: 76000, bom_expense: 6200, bom_exp_description: "Transport fuel", other_expense: 2700, other_exp_description: "Toll charges", payment_status: "PAID" },
-];
-
-function seedSampleData() {
-  const existing = JSON.parse(localStorage.getItem("invoices") || "[]");
-  const existingNos = new Set(existing.map((b) => b.invoice_no));
-  const toAdd = sampleBillings.filter((b) => !existingNos.has(b.invoice_no));
-  if (toAdd.length > 0) {
-    localStorage.setItem("invoices", JSON.stringify([...existing, ...toAdd]));
-    return true;
-  }
-  return false;
-}
-
 export default function Billing() {
   const navigate = useNavigate();
   const [billings, setBillings] = useState(() => {
@@ -442,7 +404,6 @@ export default function Billing() {
   };
 
   useEffect(() => {
-    seedSampleData();
     loadData();
   }, []);
 
@@ -451,9 +412,15 @@ export default function Billing() {
     const location = form.location_route
       ? form.location_route + (form.location_client ? `(${form.location_client})` : "")
       : form.location;
-    const submitData = { ...form, location };
+    // Compute grand total = freight + extras (rounded to whole rupees to avoid float issues)
+    const freight = Math.round(Number(form.total_amount) || 0);
+    const extrasTotal = getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0);
+    const grandTotal = freight + extrasTotal;
+    const submitData = { ...form, location, total_amount: grandTotal };
     delete submitData.location_route;
     delete submitData.location_client;
+    delete submitData.showExtrasDropdown;
+    delete submitData.pickup_new_name;
 
     if (editing) {
       // If record has a numeric DB id, try API update; otherwise update localStorage
@@ -502,6 +469,10 @@ export default function Billing() {
   const handleEdit = (b) => {
     setEditing(b);
     const parsed = parseLocation(b.location);
+    // Compute freight = total - extras (so total stays = freight + extras when re-edited)
+    const extrasTotal = getExtraChargeItems(b).reduce((s, ec) => s + ec.amount, 0);
+    const totalRounded = Math.round(Number(b.total_amount) || 0);
+    const freightAmount = totalRounded - extrasTotal;
     setForm({
       invoice_no: b.invoice_no,
       date: b.date ? b.date.split("T")[0] : "",
@@ -509,7 +480,7 @@ export default function Billing() {
       location_route: parsed.route,
       location_client: parsed.client,
       weight: b.weight || "",
-      total_amount: b.total_amount || "",
+      total_amount: freightAmount > 0 ? String(freightAmount) : "",
       bom_expense: b.bom_expense || "",
       bom_exp_description: b.bom_exp_description || "",
       other_expense: b.other_expense || "",
@@ -894,10 +865,11 @@ export default function Billing() {
     const clientName = parsed.client || "";
     const extraItems = getExtraChargeItems(b);
     const extraTotal = extraItems.reduce((s, ec) => s + ec.amount, 0);
-    const totalAmt = Number(b.total_amount) || 0;
+    const totalAmt = Math.round(Number(b.total_amount) || 0);
     const wt = Number(b.weight) || 0;
     const weightAmt = totalAmt - extraTotal > 0 ? totalAmt - extraTotal : totalAmt;
-    const ratePerKg = wt > 0 ? Math.round(weightAmt / wt) : 0;
+    // Keep rate as float (not rounded) so weight × rate = weightAmt exactly. The PDF rounds the rate display only.
+    const ratePerKg = wt > 0 ? (weightAmt / wt) : 0;
 
     // Map billing data to InvoiceCreate format
     const invoiceData = {
@@ -1179,16 +1151,30 @@ export default function Billing() {
                 )}
               </div>
               <div className="form-group">
-                <label>Weight</label>
-                <input type="number" step="0.01" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
+                <label>Weight (kgs)</label>
+                <input type="number" step="1" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Total Amount</label>
-                <input type="number" step="0.01" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
+                <label>Freight Amount</label>
+                <input type="number" step="1" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
+                {(() => {
+                  const freight = Math.round(Number(form.total_amount) || 0);
+                  const extras = getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0);
+                  const grand = freight + extras;
+                  if (extras > 0) {
+                    return (
+                      <div style={{ marginTop: 8, padding: "8px 12px", background: "#f0f4ff", border: "1px solid #c7d2fe", borderRadius: 8, fontSize: 13 }}>
+                        <div style={{ color: "#555" }}>Freight: ₹{freight.toLocaleString()} + Extras: ₹{extras.toLocaleString()}</div>
+                        <div style={{ marginTop: 4, fontWeight: 700, color: "#4361ee", fontSize: 15 }}>Grand Total: ₹{grand.toLocaleString()}</div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
               <div className="form-group">
                 <label>BOM Expense</label>
-                <input type="number" step="0.01" value={form.bom_expense} onChange={(e) => setForm({ ...form, bom_expense: e.target.value })} />
+                <input type="number" step="1" value={form.bom_expense} onChange={(e) => setForm({ ...form, bom_expense: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>BOM Exp Description</label>
@@ -1196,7 +1182,7 @@ export default function Billing() {
               </div>
               <div className="form-group">
                 <label>Other Expense</label>
-                <input type="number" step="0.01" value={form.other_expense} onChange={(e) => setForm({ ...form, other_expense: e.target.value })} />
+                <input type="number" step="1" value={form.other_expense} onChange={(e) => setForm({ ...form, other_expense: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Other Exp Description</label>

@@ -16,9 +16,14 @@ function ProtectedRoute({ children }) {
 
 function AppLayout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [logo, setLogo] = useState(() => localStorage.getItem("app_logo") || "");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const logoInputRef = useRef(null);
   const user = JSON.parse(localStorage.getItem("auth_user") || "{}");
+
+  // Auto-close sidebar on route change (mobile)
+  useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
 
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
@@ -39,7 +44,17 @@ function AppLayout() {
 
   return (
     <div className="app-layout">
-      <aside className="sidebar">
+      {/* Mobile hamburger toggle */}
+      <button
+        className="mobile-menu-toggle"
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        aria-label="Toggle menu"
+      >
+        {sidebarOpen ? "✕" : "☰"}
+      </button>
+      {/* Backdrop to close sidebar on mobile */}
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="sidebar-header" style={{ textAlign: "center", padding: "16px 16px 18px" }}>
           <img
             src={logo || "/logo.svg"}
