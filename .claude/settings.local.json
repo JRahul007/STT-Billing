@@ -9,7 +9,8 @@
       "Bash(grep -r \"width\\\\|height\\\\|px\\\\|max-width\" src/pages/*.jsx)",
       "Bash(grep -n \"250px\\\\|500px\\\\|420px\\\\|800px\\\\|780px\" src/index.css src/pages/*.jsx src/App.jsx)",
       "Bash(netstat -ano)",
-      "Bash(node -e \"require\\('./config/db'\\); console.log\\('OK'\\);\")"
+      "Bash(node -e \"require\\('./config/db'\\); console.log\\('OK'\\);\")",
+      "Bash(node -e \"const net=require\\('net'\\); ['5432','6543'].forEach\\(p=>{const s=net.connect\\(parseInt\\(p\\),'aws-1-ap-south-1.pooler.supabase.com'\\); s.setTimeout\\(6000\\); s.on\\('connect',\\(\\)=>{console.log\\(p,'OK'\\);s.end\\(\\)}\\); s.on\\('timeout',\\(\\)=>{console.log\\(p,'TIMEOUT'\\);s.destroy\\(\\)}\\); s.on\\('error',e=>console.log\\(p,'ERR',e.message\\)\\)}\\)\")"
     ]
   }
 }

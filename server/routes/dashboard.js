@@ -1,35 +1,34 @@
 const express = require("express");
 const router = express.Router();
-const { pool, isDbAvailable } = require("../config/db");
+const { supabase } = require("../config/db");
 
-router.use((req, res, next) => {
-  if (!isDbAvailable()) {
-    return res.status(503).json({ error: "Database offline", offline: true });
-  }
-  next();
-});
+async function countWhere(table, filters = {}) {
+  let q = supabase.from(table).select("*", { count: "exact", head: true });
+  for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
+  const { count, error } = await q;
+  if (error) throw error;
+  return count || 0;
+}
 
 // GET dashboard stats
 router.get("/stats", async (req, res) => {
   try {
-    const [shipments, pending, inTransit, delivered, customers, vehicles, availableVehicles] = await Promise.all([
-      pool.query("SELECT COUNT(*) as total FROM shipments"),
-      pool.query("SELECT COUNT(*) as total FROM shipments WHERE status='Pending'"),
-      pool.query("SELECT COUNT(*) as total FROM shipments WHERE status='In Transit'"),
-      pool.query("SELECT COUNT(*) as total FROM shipments WHERE status='Delivered'"),
-      pool.query("SELECT COUNT(*) as total FROM customers"),
-      pool.query("SELECT COUNT(*) as total FROM vehicles"),
-      pool.query("SELECT COUNT(*) as total FROM vehicles WHERE status='Available'"),
+    const [
+      totalShipments, pendingShipments, inTransitShipments, deliveredShipments,
+      totalCustomers, totalVehicles, availableVehicles,
+    ] = await Promise.all([
+      countWhere("shipments"),
+      countWhere("shipments", { status: "Pending" }),
+      countWhere("shipments", { status: "In Transit" }),
+      countWhere("shipments", { status: "Delivered" }),
+      countWhere("customers"),
+      countWhere("vehicles"),
+      countWhere("vehicles", { status: "Available" }),
     ]);
 
     res.json({
-      totalShipments: parseInt(shipments.rows[0].total),
-      pendingShipments: parseInt(pending.rows[0].total),
-      inTransitShipments: parseInt(inTransit.rows[0].total),
-      deliveredShipments: parseInt(delivered.rows[0].total),
-      totalCustomers: parseInt(customers.rows[0].total),
-      totalVehicles: parseInt(vehicles.rows[0].total),
-      availableVehicles: parseInt(availableVehicles.rows[0].total),
+      totalShipments, pendingShipments, inTransitShipments, deliveredShipments,
+      totalCustomers, totalVehicles, availableVehicles,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -37,66 +36,70 @@ router.get("/stats", async (req, res) => {
 });
 
 // GET billing analytics - monthly data for a given year
+// PostgREST has no SQL aggregates, so we fetch the year's rows and aggregate in JS.
+// Billing volumes are small enough that this is fine.
 router.get("/billing-analytics", async (req, res) => {
   try {
     const year = parseInt(req.query.year) || new Date().getFullYear();
+    const start = `${year}-01-01`;
+    const end = `${year + 1}-01-01`;
 
-    // Monthly totals
-    const monthlyResult = await pool.query(
-      `SELECT
-         EXTRACT(MONTH FROM date)::int as month,
-         COALESCE(SUM(total_amount), 0) as total_amount,
-         COALESCE(SUM(bom_expense), 0) as bom_expense,
-         COALESCE(SUM(other_expense), 0) as other_expense
-       FROM billings
-       WHERE EXTRACT(YEAR FROM date) = $1
-       GROUP BY EXTRACT(MONTH FROM date)
-       ORDER BY EXTRACT(MONTH FROM date)`,
-      [year]
-    );
+    const { data: rows, error } = await supabase
+      .from("billings")
+      .select("date, location, total_amount, bom_expense, other_expense")
+      .gte("date", start)
+      .lt("date", end);
+    if (error) throw error;
 
-    // Build full 12-month array
-    const months = [];
-    for (let m = 1; m <= 12; m++) {
-      const row = monthlyResult.rows.find((r) => r.month === m);
-      months.push({
+    // Build full 12-month totals
+    const months = Array.from({ length: 12 }, (_, i) => ({
+      month: i + 1,
+      total_amount: 0,
+      bom_expense: 0,
+      other_expense: 0,
+    }));
+
+    // Location-wise monthly totals: map keyed by `${location}|${month}`
+    const locMap = new Map();
+
+    for (const r of rows) {
+      const m = new Date(r.date).getMonth() + 1; // 1..12
+      const total = parseFloat(r.total_amount) || 0;
+      const bom = parseFloat(r.bom_expense) || 0;
+      const other = parseFloat(r.other_expense) || 0;
+
+      const monthRow = months[m - 1];
+      monthRow.total_amount += total;
+      monthRow.bom_expense += bom;
+      monthRow.other_expense += other;
+
+      const key = `${r.location || ""}|${m}`;
+      const existing = locMap.get(key) || {
+        location: r.location || "",
         month: m,
-        total_amount: row ? parseFloat(row.total_amount) : 0,
-        bom_expense: row ? parseFloat(row.bom_expense) : 0,
-        other_expense: row ? parseFloat(row.other_expense) : 0,
-      });
+        total_amount: 0,
+        bom_expense: 0,
+        other_expense: 0,
+      };
+      existing.total_amount += total;
+      existing.bom_expense += bom;
+      existing.other_expense += other;
+      locMap.set(key, existing);
     }
 
-    // Location-wise monthly totals
-    const locationResult = await pool.query(
-      `SELECT
-         location,
-         EXTRACT(MONTH FROM date)::int as month,
-         COALESCE(SUM(total_amount), 0) as total_amount,
-         COALESCE(SUM(bom_expense), 0) as bom_expense,
-         COALESCE(SUM(other_expense), 0) as other_expense
-       FROM billings
-       WHERE EXTRACT(YEAR FROM date) = $1
-       GROUP BY location, EXTRACT(MONTH FROM date)
-       ORDER BY location, EXTRACT(MONTH FROM date)`,
-      [year]
-    );
-
-    // Distinct years for dropdown
-    const yearsResult = await pool.query(
-      "SELECT DISTINCT EXTRACT(YEAR FROM date)::int as yr FROM billings ORDER BY yr DESC"
-    );
+    // Distinct years for dropdown — fetch all dates once
+    const { data: allDates, error: yrErr } = await supabase.from("billings").select("date");
+    if (yrErr) throw yrErr;
+    const yearSet = new Set(allDates.map((r) => new Date(r.date).getFullYear()));
+    const availableYears = [...yearSet].sort((a, b) => b - a);
 
     res.json({
       year,
       months,
-      locationData: locationResult.rows.map((r) => ({
-        ...r,
-        total_amount: parseFloat(r.total_amount),
-        bom_expense: parseFloat(r.bom_expense),
-        other_expense: parseFloat(r.other_expense),
-      })),
-      availableYears: yearsResult.rows.map((r) => r.yr),
+      locationData: [...locMap.values()].sort(
+        (a, b) => a.location.localeCompare(b.location) || a.month - b.month
+      ),
+      availableYears,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

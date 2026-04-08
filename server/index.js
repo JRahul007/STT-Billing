@@ -28,12 +28,15 @@ app.get("/api/health", (req, res) => {
 
 // Start server
 async function start() {
-  // Try to initialize DB, but don't block startup if MSSQL is unavailable
   try {
-    const { initializeDatabase } = require("./config/db");
-    await initializeDatabase();
+    const { pingDatabase } = require("./config/db");
+    await pingDatabase();
+    console.log("✅ Connected to Supabase");
   } catch (err) {
-    console.log("MSSQL not available - running with file-based auth and localStorage fallback");
+    console.error("❌ Supabase connection failed:", err.message);
+    console.error("   Check SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in .env,");
+    console.error("   and make sure you've run server/sql/schema.sql in the Supabase SQL editor.");
+    process.exit(1);
   }
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
