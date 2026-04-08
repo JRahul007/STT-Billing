@@ -65,6 +65,12 @@ export default function InvoiceCreate() {
     client_name: "Equinox Labs Pvt.Ltd",
     client_address: " Center, R65, TTC, Rabale, Navi Mumbai, Maharashtra 400701",
     client_phone: "+91 7588712196",
+    consigner_name: "SWATI TOURS & TRANSPORT",
+    consigner_address: "ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084",
+    consigner_mobile: "",
+    consignee_name: "Equinox Labs Pvt.Ltd",
+    consignee_address: " Center, R65, TTC, Rabale, Navi Mumbai, Maharashtra 400701",
+    consignee_mobile: "+91 7588712196",
     weight: "",
     boxes: "1",
     contain: "water\nsample",
@@ -103,7 +109,13 @@ export default function InvoiceCreate() {
             localStorage.setItem("stamp_image", data.stamp_image);
             delete data.stamp_image;
           }
-          setInv((prev) => ({ ...prev, ...data }));
+          setInv((prev) => ({
+            ...prev,
+            ...data,
+            consignee_name: data.consignee_name || data.client_name || prev.consignee_name,
+            consignee_address: data.consignee_address || data.client_address || prev.consignee_address,
+            consignee_mobile: data.consignee_mobile || data.client_phone || prev.consignee_mobile,
+          }));
         } catch (e) { /* ignore */ }
         localStorage.removeItem("open_invoice");
       } else {
@@ -184,7 +196,13 @@ export default function InvoiceCreate() {
       id: prev.id || Date.now(),
       invoice_no: inv.invoice_no,
       date: inv.date,
-      location: inv.route + (inv.client_name ? `(${inv.client_name})` : ""),
+      location: inv.route + ((inv.consignee_name || inv.client_name) ? `(${inv.consignee_name || inv.client_name})` : ""),
+      consigner_name: (inv.consigner_name || "").toUpperCase(),
+      consigner_address: inv.consigner_address || "",
+      consigner_mobile: inv.consigner_mobile || "",
+      consignee_name: (inv.consignee_name || inv.client_name || "").toUpperCase(),
+      consignee_address: inv.consignee_address || inv.client_address || "",
+      consignee_mobile: inv.consignee_mobile || inv.client_phone || "",
       weight: weight,
       total_amount: Math.round(totalAmount),
       // Extra charges fields
@@ -550,23 +568,22 @@ export default function InvoiceCreate() {
             <tr>
               {/* Consignor - Fixed */}
               <td className="val" style={{ lineHeight: 1.7, padding: "10px" }}>
-                <div style={{ fontWeight: "bold", fontSize: 13, marginBottom: 3 }}>SWATI TOURS &amp; TRANSPORT</div>
-                <div style={{ fontSize: 10.5, color: "#444", lineHeight: 1.5 }}>
-                  ROOM NO 4, RAM NAGIN TIWARI<br />
-                  BHUVAN ASALFA VILLAGE, NEAR<br />
-                  SHRI RAM APTGHATKOPAR WEST<br />
-                  MUMBAI 400084
-                </div>
+                <input className="edt" style={{ ...edt, fontSize: 14, width: "100%", marginBottom: 3, textTransform: "uppercase", fontWeight: "bold" }}
+                  value={inv.consigner_name} onChange={(e) => setInv({ ...inv, consigner_name: e.target.value.toUpperCase() })} />
+                <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 10.5, lineHeight: 1.5, borderBottom: "1px dashed #999", color: "#444" }}
+                  rows={2} value={inv.consigner_address} onChange={(e) => setInv({ ...inv, consigner_address: e.target.value })} />
+                <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", marginTop: 2, color: "#444" }}
+                  value={inv.consigner_mobile} onChange={(e) => setInv({ ...inv, consigner_mobile: e.target.value })} />
               </td>
 
               {/* Consignee - Editable */}
               <td className="val" style={{ lineHeight: 1.7, padding: "10px" }}>
-                <input className="edt" style={{ ...edt, fontSize: 14, width: "100%", marginBottom: 3 }}
-                  value={inv.client_name} onChange={(e) => setInv({ ...inv, client_name: e.target.value })} />
+                <input className="edt" style={{ ...edt, fontSize: 14, width: "100%", marginBottom: 3, textTransform: "uppercase", fontWeight: "bold" }}
+                  value={inv.consignee_name} onChange={(e) => setInv({ ...inv, consignee_name: e.target.value.toUpperCase(), client_name: e.target.value })} />
                 <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 10.5, lineHeight: 1.5, borderBottom: "1px dashed #999", color: "#444" }}
-                  rows={2} value={inv.client_address} onChange={(e) => setInv({ ...inv, client_address: e.target.value })} />
+                  rows={2} value={inv.consignee_address} onChange={(e) => setInv({ ...inv, consignee_address: e.target.value, client_address: e.target.value })} />
                 <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", marginTop: 2, color: "#444" }}
-                  value={inv.client_phone} onChange={(e) => setInv({ ...inv, client_phone: e.target.value })} />
+                  value={inv.consignee_mobile} onChange={(e) => setInv({ ...inv, consignee_mobile: e.target.value, client_phone: e.target.value })} />
               </td>
 
               {/* Invoice No with Barcode */}

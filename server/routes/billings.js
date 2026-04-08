@@ -9,6 +9,8 @@ function extractExtraData(body) {
     show_oda, oda_location, oda_person, oda_amount,
     show_pickup, pickup_rate, pickup_entries,
     show_other, other_desc, other_amount,
+    consigner_name, consigner_address, consigner_mobile,
+    consignee_name, consignee_address, consignee_mobile,
   } = body;
   return {
     show_packaging: show_packaging || false,
@@ -24,6 +26,12 @@ function extractExtraData(body) {
     show_other: show_other || false,
     other_desc: other_desc || "",
     other_amount: other_amount || "",
+    consigner_name: consigner_name || "",
+    consigner_address: consigner_address || "",
+    consigner_mobile: consigner_mobile || "",
+    consignee_name: consignee_name || "",
+    consignee_address: consignee_address || "",
+    consignee_mobile: consignee_mobile || "",
   };
 }
 

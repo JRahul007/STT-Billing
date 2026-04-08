@@ -4,11 +4,31 @@ import JsBarcode from "jsbarcode";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import html2canvas from "html2canvas";
-import { getBillings, createBilling, updateBilling, deleteBilling } from "../services/api";
+import {
+  getBillings,
+  createBilling,
+  updateBilling,
+  deleteBilling,
+  getParties,
+  createParty,
+  updateParty,
+  deleteParty,
+} from "../services/api";
 import defaultStamp from "../defaultStamp";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DEFAULT_CONSIGNER = {
+  name: "SWATI TOURS & TRANSPORT",
+  address: "ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084",
+  mobile: "",
+};
+
+const DEFAULT_CONSIGNEE = {
+  name: "EQUINOX LABS PVT.LTD",
+  address: "Center, R65, TTC, Rabale, Navi Mumbai, Maharashtra 400701",
+  mobile: "+91 7588712196",
+};
 
 function extractLocation(routeStr) {
   if (!routeStr) return null;
@@ -27,6 +47,12 @@ const emptyForm = {
   location: "",
   location_route: "",
   location_client: "",
+  consigner_name: DEFAULT_CONSIGNER.name,
+  consigner_address: DEFAULT_CONSIGNER.address,
+  consigner_mobile: DEFAULT_CONSIGNER.mobile,
+  consignee_name: DEFAULT_CONSIGNEE.name,
+  consignee_address: DEFAULT_CONSIGNEE.address,
+  consignee_mobile: DEFAULT_CONSIGNEE.mobile,
   weight: "",
   total_amount: "",
   bom_expense: "",
@@ -52,6 +78,20 @@ const emptyForm = {
   payment_status: "NOTPAID",
 };
 
+function buildDefaultBillingForm(consigners = [], consignees = []) {
+  const selectedConsigner = consigners[0] ? normalizeParty(consigners[0]) : normalizeParty(DEFAULT_CONSIGNER);
+  const selectedConsignee = consignees[0] ? normalizeParty(consignees[0]) : normalizeParty(DEFAULT_CONSIGNEE);
+  return {
+    ...emptyForm,
+    consigner_name: selectedConsigner.name,
+    consigner_address: selectedConsigner.address,
+    consigner_mobile: selectedConsigner.mobile,
+    consignee_name: selectedConsignee.name,
+    consignee_address: selectedConsignee.address,
+    consignee_mobile: selectedConsignee.mobile,
+  };
+}
+
 const defaultLocations = ["BOM-PUNE", "PUNE-BOM", "BOM-GOA", "GOA-BOM", "IDR-BOM", "BOM-IDR"];
 
 // Extract extra charges as [{description, amount}] from a billing record
@@ -73,6 +113,29 @@ function getExtraChargeItems(b) {
   return items;
 }
 
+function normalizeParty(party) {
+  return {
+    id: party?.id,
+    party_type: party?.party_type || "",
+    name: (party?.name || "").trim().toUpperCase(),
+    address: (party?.address || "").trim(),
+    mobile: (party?.mobile || "").trim(),
+  };
+}
+
+function formatPartyName(name) {
+  return (name || "").trim().toUpperCase();
+}
+
+function findPartyIndex(list, target) {
+  if (!target?.name) return -1;
+  return list.findIndex((party) =>
+    party.name === formatPartyName(target.name)
+    && (party.address || "") === (target.address || "")
+    && (party.mobile || "") === (target.mobile || "")
+  );
+}
+
 export default function Billing() {
   const navigate = useNavigate();
   const [billings, setBillings] = useState(() => {
@@ -80,7 +143,7 @@ export default function Billing() {
   });
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ ...emptyForm });
+  const [form, setForm] = useState(() => buildDefaultBillingForm([DEFAULT_CONSIGNER], [DEFAULT_CONSIGNEE]));
   const [locations, setLocations] = useState(() => {
     const saved = localStorage.getItem("billing_locations");
     return saved ? JSON.parse(saved) : [...defaultLocations];
@@ -90,6 +153,12 @@ export default function Billing() {
     const saved = localStorage.getItem("pickup_roster");
     return saved ? JSON.parse(saved) : ["Ankit Yadav", "Dhiraj Maske", "Tirath Mali"];
   });
+  const [consigners, setConsigners] = useState(() => [normalizeParty(DEFAULT_CONSIGNER)]);
+  const [consignees, setConsignees] = useState(() => [normalizeParty(DEFAULT_CONSIGNEE)]);
+  const [showPartyModal, setShowPartyModal] = useState(false);
+  const [partyType, setPartyType] = useState("consignee");
+  const [partyEditingIndex, setPartyEditingIndex] = useState(null);
+  const [partyForm, setPartyForm] = useState({ name: "", address: "", mobile: "" });
   const [filterMonth, setFilterMonth] = useState("");
   const [filterYear, setFilterYear] = useState(new Date().getFullYear().toString());
   const [filterLocation, setFilterLocation] = useState("");
@@ -390,6 +459,175 @@ export default function Billing() {
     }
   };
 
+  const getCurrentPartyList = () => (partyType === "consigner" ? consigners : consignees);
+
+  const loadParties = async () => {
+    try {
+      let { data } = await getParties();
+      let all = Array.isArray(data) ? data : [];
+
+      const hasConsigner = all.some((party) => party.party_type === "consigner");
+      const hasConsignee = all.some((party) => party.party_type === "consignee");
+
+      if (!hasConsigner) {
+        await createParty({ party_type: "consigner", ...DEFAULT_CONSIGNER });
+      }
+      if (!hasConsignee) {
+        await createParty({ party_type: "consignee", ...DEFAULT_CONSIGNEE });
+      }
+
+      if (!hasConsigner || !hasConsignee) {
+        const reloaded = await getParties();
+        all = Array.isArray(reloaded.data) ? reloaded.data : [];
+      }
+
+      const consignerList = all
+        .filter((party) => party.party_type === "consigner")
+        .map((party) => normalizeParty(party));
+      const consigneeList = all
+        .filter((party) => party.party_type === "consignee")
+        .map((party) => normalizeParty(party));
+
+      const safeConsigners = consignerList.length > 0 ? consignerList : [normalizeParty(DEFAULT_CONSIGNER)];
+      const safeConsignees = consigneeList.length > 0 ? consigneeList : [normalizeParty(DEFAULT_CONSIGNEE)];
+
+      setConsigners(safeConsigners);
+      setConsignees(safeConsignees);
+    } catch (e) {
+      setConsigners([normalizeParty(DEFAULT_CONSIGNER)]);
+      setConsignees([normalizeParty(DEFAULT_CONSIGNEE)]);
+    }
+  };
+
+  const openPartyManager = (type) => {
+    setPartyType(type);
+    setPartyEditingIndex(null);
+    setPartyForm({ name: "", address: "", mobile: "" });
+    setShowPartyModal(true);
+  };
+
+  const closePartyManager = () => {
+    setShowPartyModal(false);
+    setPartyEditingIndex(null);
+    setPartyForm({ name: "", address: "", mobile: "" });
+  };
+
+  const startEditParty = (index) => {
+    const list = getCurrentPartyList();
+    const current = list[index];
+    if (!current) return;
+    setPartyEditingIndex(index);
+    setPartyForm({ ...current });
+  };
+
+  const handleDeleteParty = async (index) => {
+    const list = getCurrentPartyList();
+    const target = list[index];
+    if (!target) return;
+    if (!window.confirm(`Delete ${partyType} "${target.name}"?`)) return;
+
+    if (!target.id) {
+      alert("This party is not in DB yet. Please refresh and try again.");
+      return;
+    }
+
+    try {
+      await deleteParty(target.id);
+      await loadParties();
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to delete party.");
+      return;
+    }
+
+    if (partyType === "consigner" && form.consigner_name === target.name) {
+      setForm((prev) => ({ ...prev, consigner_name: "", consigner_address: "", consigner_mobile: "" }));
+    }
+    if (partyType === "consignee" && form.consignee_name === target.name) {
+      setForm((prev) => ({ ...prev, consignee_name: "", consignee_address: "", consignee_mobile: "" }));
+    }
+  };
+
+  const handleSaveParty = async (e) => {
+    e.preventDefault();
+    const normalized = normalizeParty(partyForm);
+    if (!normalized.name) {
+      alert("Name is required.");
+      return;
+    }
+
+    const payload = {
+      party_type: partyType,
+      name: normalized.name,
+      address: normalized.address,
+      mobile: normalized.mobile,
+    };
+
+    try {
+      if (partyEditingIndex != null && partyEditingIndex >= 0) {
+        const current = getCurrentPartyList()[partyEditingIndex];
+        if (!current?.id) {
+          alert("Cannot update this party right now. Please refresh and try again.");
+          return;
+        }
+        await updateParty(current.id, payload);
+      } else {
+        await createParty(payload);
+      }
+      await loadParties();
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to save party.");
+      return;
+    }
+
+    if (partyType === "consigner") {
+      setForm((prev) => ({
+        ...prev,
+        consigner_name: normalized.name,
+        consigner_address: normalized.address,
+        consigner_mobile: normalized.mobile,
+      }));
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        consignee_name: normalized.name,
+        consignee_address: normalized.address,
+        consignee_mobile: normalized.mobile,
+      }));
+    }
+
+    setPartyEditingIndex(null);
+    setPartyForm({ name: "", address: "", mobile: "" });
+  };
+
+  const applySelectedParty = (type, index) => {
+    if (index === "") {
+      if (type === "consigner") {
+        setForm((prev) => ({ ...prev, consigner_name: "", consigner_address: "", consigner_mobile: "" }));
+      } else {
+        setForm((prev) => ({ ...prev, consignee_name: "", consignee_address: "", consignee_mobile: "" }));
+      }
+      return;
+    }
+    const list = type === "consigner" ? consigners : consignees;
+    const selected = list[Number(index)];
+    if (!selected) return;
+    if (type === "consigner") {
+      setForm((prev) => ({
+        ...prev,
+        consigner_name: selected.name,
+        consigner_address: selected.address,
+        consigner_mobile: selected.mobile,
+      }));
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        consignee_name: selected.name,
+        consignee_address: selected.address,
+        consignee_mobile: selected.mobile,
+      }));
+    }
+  };
+
   const loadData = () => {
     const localInvoices = JSON.parse(localStorage.getItem("invoices") || "[]");
     getBillings().then((res) => {
@@ -405,6 +643,7 @@ export default function Billing() {
 
   useEffect(() => {
     loadData();
+    loadParties();
   }, []);
 
   const handleSubmit = async (e) => {
@@ -454,7 +693,7 @@ export default function Billing() {
 
     setShowModal(false);
     setEditing(null);
-    setForm({ ...emptyForm });
+    setForm(buildDefaultBillingForm(consigners, consignees));
     loadData();
   };
 
@@ -469,6 +708,16 @@ export default function Billing() {
   const handleEdit = (b) => {
     setEditing(b);
     const parsed = parseLocation(b.location);
+    const savedConsigner = normalizeParty({
+      name: b.consigner_name || DEFAULT_CONSIGNER.name,
+      address: b.consigner_address || DEFAULT_CONSIGNER.address,
+      mobile: b.consigner_mobile || DEFAULT_CONSIGNER.mobile,
+    });
+    const savedConsignee = normalizeParty({
+      name: b.consignee_name || parsed.client || "",
+      address: b.consignee_address || "",
+      mobile: b.consignee_mobile || "",
+    });
     // Compute freight = total - extras (so total stays = freight + extras when re-edited)
     const extrasTotal = getExtraChargeItems(b).reduce((s, ec) => s + ec.amount, 0);
     const totalRounded = Math.round(Number(b.total_amount) || 0);
@@ -479,6 +728,12 @@ export default function Billing() {
       location: b.location || "",
       location_route: parsed.route,
       location_client: parsed.client,
+      consigner_name: savedConsigner.name,
+      consigner_address: savedConsigner.address,
+      consigner_mobile: savedConsigner.mobile,
+      consignee_name: savedConsignee.name,
+      consignee_address: savedConsignee.address,
+      consignee_mobile: savedConsignee.mobile,
       weight: b.weight || "",
       total_amount: freightAmount > 0 ? String(freightAmount) : "",
       bom_expense: b.bom_expense || "",
@@ -551,7 +806,16 @@ export default function Billing() {
     const grandTotal = weightAmt + packagingAmt;
     const amtWords = numberToWords(Math.floor(grandTotal)) + " Rupees Only";
 
-    const shipperName = clientName || "";
+    const consigner = normalizeParty({
+      name: b.consigner_name || DEFAULT_CONSIGNER.name,
+      address: b.consigner_address || DEFAULT_CONSIGNER.address,
+      mobile: b.consigner_mobile || "",
+    });
+    const consignee = normalizeParty({
+      name: b.consignee_name || clientName || "",
+      address: b.consignee_address || "",
+      mobile: b.consignee_mobile || "",
+    });
 
     // Generate barcode as data URL
     let barcodeDataUrl = "";
@@ -608,11 +872,14 @@ export default function Billing() {
       <tr><td class="lbl">Consignor's</td><td class="lbl">CONSIGNEE</td><td class="lbl" style="text-align:center;">INVOICE No</td><td class="lbl" style="text-align:center;">Dated</td></tr>
       <tr>
         <td style="padding:10px; line-height:1.7;">
-          <strong style="font-size:13px;">SWATI TOURS &amp; TRANSPORT</strong><br/>
-          <span style="font-size:10.5px; color:#444; line-height:1.5;">ROOM NO 4, RAM NAGIN TIWARI<br/>BHUVAN ASALFA VILLAGE, NEAR<br/>SHRI RAM APTGHATKOPAR WEST<br/>MUMBAI 400084</span>
+          <strong style="font-size:13px;">${formatPartyName(consigner.name)}</strong><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5; white-space:pre-line;">${consigner.address || "-"}</span><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5;">${consigner.mobile || "-"}</span>
         </td>
         <td style="padding:10px; line-height:1.7;">
-          <strong style="font-size:14px;">${shipperName}</strong><br/>
+          <strong style="font-size:14px;">${formatPartyName(consignee.name)}</strong><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5; white-space:pre-line;">${consignee.address || "-"}</span><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5;">${consignee.mobile || "-"}</span>
         </td>
         <td style="text-align:center; vertical-align:middle; padding:10px;">
           ${barcodeDataUrl ? `<img src="${barcodeDataUrl}" style="max-width:100%; height:auto;" />` : ""}
@@ -718,7 +985,16 @@ export default function Billing() {
     const ratePerKg = weight > 0 ? (weightAmt / weight) : 0;
     const grandTotal = weightAmt + extraTotal;
     const amtWords = numberToWords(Math.floor(grandTotal)) + " Rupees Only";
-    const shipperName = clientName || "";
+    const consigner = normalizeParty({
+      name: b.consigner_name || DEFAULT_CONSIGNER.name,
+      address: b.consigner_address || DEFAULT_CONSIGNER.address,
+      mobile: b.consigner_mobile || "",
+    });
+    const consignee = normalizeParty({
+      name: b.consignee_name || clientName || "",
+      address: b.consignee_address || "",
+      mobile: b.consignee_mobile || "",
+    });
 
     let barcodeDataUrl = "";
     try {
@@ -759,11 +1035,14 @@ export default function Billing() {
       </tr>
       <tr>
         <td style="border:1px solid #333; padding:10px; line-height:1.7; vertical-align:top; font-size:13px;">
-          <strong style="font-size:13px;">SWATI TOURS &amp; TRANSPORT</strong><br/>
-          <span style="font-size:10.5px; color:#444; line-height:1.5;">ROOM NO 4, RAM NAGIN TIWARI<br/>BHUVAN ASALFA VILLAGE, NEAR<br/>SHRI RAM APTGHATKOPAR WEST<br/>MUMBAI 400084</span>
+          <strong style="font-size:13px;">${formatPartyName(consigner.name)}</strong><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5; white-space:pre-line;">${consigner.address || "-"}</span><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5;">${consigner.mobile || "-"}</span>
         </td>
         <td style="border:1px solid #333; padding:10px; line-height:1.7; vertical-align:top; font-size:13px;">
-          <strong style="font-size:14px;">${shipperName}</strong>
+          <strong style="font-size:14px;">${formatPartyName(consignee.name)}</strong><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5; white-space:pre-line;">${consignee.address || "-"}</span><br/>
+          <span style="font-size:10.5px; color:#444; line-height:1.5;">${consignee.mobile || "-"}</span>
         </td>
         <td style="border:1px solid #333; text-align:center; vertical-align:middle; padding:10px; font-size:13px;">
           ${barcodeDataUrl ? `<img src="${barcodeDataUrl}" style="max-width:100%; height:auto;" />` : ""}
@@ -863,6 +1142,16 @@ export default function Billing() {
     const parsed = parseLocation(b.location);
     const route = parsed.route || b.location || "";
     const clientName = parsed.client || "";
+    const consigner = normalizeParty({
+      name: b.consigner_name || DEFAULT_CONSIGNER.name,
+      address: b.consigner_address || DEFAULT_CONSIGNER.address,
+      mobile: b.consigner_mobile || "",
+    });
+    const consignee = normalizeParty({
+      name: b.consignee_name || clientName || "",
+      address: b.consignee_address || "",
+      mobile: b.consignee_mobile || "",
+    });
     const extraItems = getExtraChargeItems(b);
     const extraTotal = extraItems.reduce((s, ec) => s + ec.amount, 0);
     const totalAmt = Math.round(Number(b.total_amount) || 0);
@@ -876,9 +1165,15 @@ export default function Billing() {
       invoice_no: b.invoice_no || "",
       date: b.date ? b.date.split("T")[0] : "",
       route: route,
-      client_name: clientName,
-      client_address: "",
-      client_phone: "",
+      client_name: consignee.name,
+      client_address: consignee.address,
+      client_phone: consignee.mobile,
+      consigner_name: consigner.name,
+      consigner_address: consigner.address,
+      consigner_mobile: consigner.mobile,
+      consignee_name: consignee.name,
+      consignee_address: consignee.address,
+      consignee_mobile: consignee.mobile,
       weight: String(wt),
       boxes: String(b.boxes || "1"),
       contain: "water\nsample",
@@ -907,7 +1202,7 @@ export default function Billing() {
         <h1>Billing Details</h1>
         <button
           className="btn btn-primary"
-          onClick={() => { setEditing(null); setForm({ ...emptyForm }); setShowModal(true); }}
+          onClick={() => { setEditing(null); setForm(buildDefaultBillingForm(consigners, consignees)); setShowModal(true); }}
         >
           + Add Billing
         </button>
@@ -1155,6 +1450,68 @@ export default function Billing() {
                 <input type="number" step="1" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
               </div>
               <div className="form-group">
+                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Consigner</span>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => openPartyManager("consigner")}>Manage</button>
+                </label>
+                <select
+                  value={(() => {
+                    const index = findPartyIndex(consigners, {
+                      name: form.consigner_name,
+                      address: form.consigner_address,
+                      mobile: form.consigner_mobile,
+                    });
+                    return index >= 0 ? String(index) : "";
+                  })()}
+                  onChange={(e) => applySelectedParty("consigner", e.target.value)}
+                >
+                  <option value="">-- Select Consigner --</option>
+                  {consigners.map((party, index) => (
+                    <option key={`${party.name}-${index}`} value={index}>
+                      {party.name}
+                    </option>
+                  ))}
+                </select>
+                {form.consigner_name && (
+                  <div style={{ marginTop: 8, border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", fontSize: 12, lineHeight: 1.6 }}>
+                    <div style={{ fontWeight: 700 }}>{formatPartyName(form.consigner_name)}</div>
+                    <div>{form.consigner_address || "-"}</div>
+                    <div>{form.consigner_mobile || "-"}</div>
+                  </div>
+                )}
+              </div>
+              <div className="form-group">
+                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Consignee</span>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => openPartyManager("consignee")}>Manage</button>
+                </label>
+                <select
+                  value={(() => {
+                    const index = findPartyIndex(consignees, {
+                      name: form.consignee_name,
+                      address: form.consignee_address,
+                      mobile: form.consignee_mobile,
+                    });
+                    return index >= 0 ? String(index) : "";
+                  })()}
+                  onChange={(e) => applySelectedParty("consignee", e.target.value)}
+                >
+                  <option value="">-- Select Consignee --</option>
+                  {consignees.map((party, index) => (
+                    <option key={`${party.name}-${index}`} value={index}>
+                      {party.name}
+                    </option>
+                  ))}
+                </select>
+                {form.consignee_name && (
+                  <div style={{ marginTop: 8, border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", fontSize: 12, lineHeight: 1.6 }}>
+                    <div style={{ fontWeight: 700 }}>{formatPartyName(form.consignee_name)}</div>
+                    <div>{form.consignee_address || "-"}</div>
+                    <div>{form.consignee_mobile || "-"}</div>
+                  </div>
+                )}
+              </div>
+              <div className="form-group">
                 <label>Freight Amount</label>
                 <input type="number" step="1" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
                 {(() => {
@@ -1390,6 +1747,97 @@ export default function Billing() {
                 <button type="submit" className="btn btn-primary">{editing ? "Update" : "Add"}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {showPartyModal && (
+        <div className="modal-overlay" onClick={closePartyManager}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>
+              Manage {partyType === "consigner" ? "Consigners" : "Consignees"}
+            </h2>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ background: partyType === "consigner" ? "#4361ee" : "#ddd", color: partyType === "consigner" ? "#fff" : "#333" }}
+                onClick={() => {
+                  setPartyType("consigner");
+                  setPartyEditingIndex(null);
+                  setPartyForm({ name: "", address: "", mobile: "" });
+                }}
+              >
+                Consigners
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ background: partyType === "consignee" ? "#4361ee" : "#ddd", color: partyType === "consignee" ? "#fff" : "#333" }}
+                onClick={() => {
+                  setPartyType("consignee");
+                  setPartyEditingIndex(null);
+                  setPartyForm({ name: "", address: "", mobile: "" });
+                }}
+              >
+                Consignees
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveParty}>
+              <div className="form-group">
+                <label>Name</label>
+                <input
+                  value={partyForm.name}
+                  onChange={(e) => setPartyForm({ ...partyForm, name: e.target.value.toUpperCase() })}
+                  placeholder="Name"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Address</label>
+                <textarea
+                  rows={3}
+                  value={partyForm.address}
+                  onChange={(e) => setPartyForm({ ...partyForm, address: e.target.value })}
+                  placeholder="Address"
+                />
+              </div>
+              <div className="form-group">
+                <label>Mobile No.</label>
+                <input
+                  value={partyForm.mobile}
+                  onChange={(e) => setPartyForm({ ...partyForm, mobile: e.target.value })}
+                  placeholder="Mobile number"
+                />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={closePartyManager}>Close</button>
+                <button type="submit" className="btn btn-primary">{partyEditingIndex != null ? "Update" : "Add"}</button>
+              </div>
+            </form>
+
+            <div style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                Saved {partyType === "consigner" ? "Consigners" : "Consignees"}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+                {getCurrentPartyList().length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#888" }}>No records found.</div>
+                ) : (
+                  getCurrentPartyList().map((party, index) => (
+                    <div key={`${party.name}-${index}`} style={{ border: "1px solid #e5e5e5", borderRadius: 8, padding: 8 }}>
+                      <div style={{ fontWeight: 700, fontSize: 12 }}>{formatPartyName(party.name)}</div>
+                      <div style={{ fontSize: 11, color: "#555", whiteSpace: "pre-wrap" }}>{party.address || "-"}</div>
+                      <div style={{ fontSize: 11, color: "#555", marginBottom: 6 }}>{party.mobile || "-"}</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button type="button" className="btn btn-sm btn-secondary" onClick={() => startEditParty(index)}>Edit</button>
+                        <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteParty(index)}>Delete</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

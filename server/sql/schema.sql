@@ -53,3 +53,21 @@ CREATE TABLE IF NOT EXISTS billings (
 -- and the upsert path looks rows up by invoice_no.
 CREATE INDEX IF NOT EXISTS idx_billings_date       ON billings(date);
 CREATE INDEX IF NOT EXISTS idx_billings_created_at ON billings(created_at DESC);
+
+-- =====================================================================
+-- billing_parties (consigner/consignee master)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS billing_parties (
+  id          BIGSERIAL PRIMARY KEY,
+  party_type  TEXT        NOT NULL CHECK (party_type IN ('consigner', 'consignee')),
+  name        TEXT        NOT NULL,
+  address     TEXT,
+  mobile      TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Prevent duplicate names within same type (case-insensitive)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_parties_type_name_unique
+  ON billing_parties (party_type, UPPER(name));
+
+CREATE INDEX IF NOT EXISTS idx_billing_parties_type ON billing_parties(party_type);

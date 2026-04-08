@@ -5,6 +5,7 @@ require("dotenv").config();
 const authRoutes = require("./routes/auth");
 const dashboardRoutes = require("./routes/dashboard");
 const billingRoutes = require("./routes/billings");
+const partyRoutes = require("./routes/parties");
 const { authMiddleware } = require("./middleware/auth");
 
 const app = express();
@@ -20,6 +21,7 @@ app.use("/api/auth", authRoutes);
 // Protected routes (auth required)
 app.use("/api/dashboard", authMiddleware, dashboardRoutes);
 app.use("/api/billings", authMiddleware, billingRoutes);
+app.use("/api/parties", authMiddleware, partyRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

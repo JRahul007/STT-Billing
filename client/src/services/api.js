@@ -47,4 +47,11 @@ export const createBilling = (data) => api.post("/billings", data);
 export const updateBilling = (id, data) => api.put(`/billings/${id}`, data);
 export const deleteBilling = (id) => api.delete(`/billings/${id}`);
 
+// Billing Parties (consigner/consignee master)
+export const getParties = (partyType) =>
+  api.get(partyType ? `/parties?party_type=${partyType}` : "/parties");
+export const createParty = (data) => api.post("/parties", data);
+export const updateParty = (id, data) => api.put(`/parties/${id}`, data);
+export const deleteParty = (id) => api.delete(`/parties/${id}`);
+
 export default api;
