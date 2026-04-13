@@ -15,9 +15,14 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Auto-logout on 401
+// Detect HTML responses (API URL misconfigured - pointing to Firebase hosting instead of backend)
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    if (typeof res.data === "string" && res.data.trimStart().startsWith("<!DOCTYPE")) {
+      return Promise.reject(new Error("API returned HTML instead of JSON. Check VITE_API_BASE_URL in your .env file."));
+    }
+    return res;
+  },
   (err) => {
     if (err.response && err.response.status === 401) {
       // Don't redirect if already on auth pages

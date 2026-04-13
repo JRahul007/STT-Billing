@@ -24,8 +24,12 @@ export default function Register() {
         email: form.email,
         password: form.password,
       });
+      if (!res.data || !res.data.token || typeof res.data.token !== "string") {
+        setError("Server returned an invalid response. Please check your API configuration.");
+        return;
+      }
       localStorage.setItem("auth_token", res.data.token);
-      localStorage.setItem("auth_user", JSON.stringify(res.data.user));
+      localStorage.setItem("auth_user", JSON.stringify(res.data.user || {}));
       navigate("/");
     } catch (err) {
       setError(err.response?.data?.error || "Registration failed. Please try again.");

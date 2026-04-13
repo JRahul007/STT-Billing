@@ -14,11 +14,15 @@ export default function Login() {
     setLoading(true);
     try {
       const res = await loginUser(form);
+      if (!res.data || !res.data.token || typeof res.data.token !== "string") {
+        setError("Server returned an invalid response. Please check your API configuration.");
+        return;
+      }
       localStorage.setItem("auth_token", res.data.token);
-      localStorage.setItem("auth_user", JSON.stringify(res.data.user));
+      localStorage.setItem("auth_user", JSON.stringify(res.data.user || {}));
       navigate("/");
     } catch (err) {
-      setError(err.response?.data?.error || "Login failed. Please try again.");
+      setError(err.response?.data?.error || "Login failed. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }

@@ -162,6 +162,7 @@ export default function Billing() {
   const [filterMonth, setFilterMonth] = useState("");
   const [filterYear, setFilterYear] = useState(new Date().getFullYear().toString());
   const [filterLocation, setFilterLocation] = useState("");
+  const [filterClient, setFilterClient] = useState("");
   const [showExportPanel, setShowExportPanel] = useState(false);
 
   const ALL_COLUMNS = [
@@ -196,6 +197,15 @@ export default function Billing() {
     return Array.from(locs).sort();
   }, [billings]);
 
+  const availableClients = useMemo(() => {
+    const clients = new Set();
+    billings.forEach((b) => {
+      const name = b.consignee_name;
+      if (name) clients.add(name);
+    });
+    return Array.from(clients).sort();
+  }, [billings]);
+
   const filteredBillings = useMemo(() => {
     return billings.filter((b) => {
       if (!b.date) return !filterMonth && !filterYear;
@@ -203,9 +213,10 @@ export default function Billing() {
       if (filterYear && d.getFullYear() !== parseInt(filterYear)) return false;
       if (filterMonth && (d.getMonth() + 1) !== parseInt(filterMonth)) return false;
       if (filterLocation && extractLocation(b.location) !== filterLocation) return false;
+      if (filterClient && b.consignee_name !== filterClient) return false;
       return true;
     });
-  }, [billings, filterMonth, filterYear, filterLocation]);
+  }, [billings, filterMonth, filterYear, filterLocation, filterClient]);
 
   const filterTotals = useMemo(() => {
     return filteredBillings.reduce(
@@ -223,6 +234,7 @@ export default function Billing() {
 
   const getFilterLabel = () => {
     let label = "Billing Data";
+    if (filterClient) label += ` - ${filterClient}`;
     if (filterLocation) label += ` - ${filterLocation}`;
     if (filterMonth && filterYear) {
       label += ` (${MONTH_FULL[filterMonth - 1]}-${filterYear})`;
@@ -1235,7 +1247,15 @@ export default function Billing() {
               {availableLocations.map((loc) => <option key={loc} value={loc}>{loc}</option>)}
             </select>
           </div>
-          <button className="btn btn-sm btn-secondary" onClick={() => { setFilterYear(new Date().getFullYear().toString()); setFilterMonth(""); setFilterLocation(""); }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, fontWeight: 600 }}>Client:</label>
+            <select value={filterClient} onChange={(e) => setFilterClient(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13 }}>
+              <option value="">All Clients</option>
+              {availableClients.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <button className="btn btn-sm btn-secondary" onClick={() => { setFilterYear(new Date().getFullYear().toString()); setFilterMonth(""); setFilterLocation(""); setFilterClient(""); }}>
             Reset
           </button>
           <span style={{ fontSize: 13, color: "#666", marginLeft: "auto" }}>
@@ -1249,6 +1269,7 @@ export default function Billing() {
         <div className="stat-card blue">
           <div className="label">
             Total Billing
+            {filterClient ? ` - ${filterClient}` : ""}
             {filterLocation ? ` - ${filterLocation}` : ""}
             {filterMonth ? ` - ${MONTH_NAMES[filterMonth - 1]}` : ""}
             {filterYear ? ` ${filterYear}` : ""}
@@ -1258,6 +1279,7 @@ export default function Billing() {
         <div className="stat-card orange">
           <div className="label">
             BOM Expense
+            {filterClient ? ` - ${filterClient}` : ""}
             {filterLocation ? ` - ${filterLocation}` : ""}
             {filterMonth ? ` - ${MONTH_NAMES[filterMonth - 1]}` : ""}
             {filterYear ? ` ${filterYear}` : ""}
@@ -1267,6 +1289,7 @@ export default function Billing() {
         <div className="stat-card red">
           <div className="label">
             Other Expense
+            {filterClient ? ` - ${filterClient}` : ""}
             {filterLocation ? ` - ${filterLocation}` : ""}
             {filterMonth ? ` - ${MONTH_NAMES[filterMonth - 1]}` : ""}
             {filterYear ? ` ${filterYear}` : ""}

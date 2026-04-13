@@ -92,6 +92,20 @@ export default function InvoiceCreate() {
     show_other: false,
     other_desc: "",
     other_amount: "",
+    // Editable header & footer fields
+    company_name: "SWATI TOURS & TRANSPORT",
+    company_address: "ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084",
+    company_pan: "UAM MH19D0152647 / PAN BSNPP7564G",
+    service_desc: "Bill for Providing Services for",
+    service_suffix: "sending\u00A0\u00A0sample",
+    signature_label: "For Swati Tours & Transport",
+    bank_name: "Bank of India",
+    bank_account_holder: "Swati Tours and Transport",
+    bank_account_no: "061320110001257",
+    bank_ifsc: "BKID0000613",
+    bank_branch: "Vishrantwadi, Pune",
+    received_name: "",
+    received_date: "",
   });
 
   const initialized = useRef(false);
@@ -541,9 +555,14 @@ export default function InvoiceCreate() {
 
         {/* HEADER */}
         <div className="inv-head" style={{ position: "relative", zIndex: 1 }}>
-          <h1>SWATI TOURS &amp; TRANSPORT</h1>
-          <p className="addr">ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084</p>
-          <p className="pan">UAM MH19D0152647 / PAN BSNPP7564G</p>
+          <h1>
+            <input className="edt" style={{ ...edt, fontSize: 20, fontWeight: "bold", letterSpacing: 3, color: "#b71c1c", textAlign: "center", width: "100%", borderBottom: "none", fontFamily: "'Courier New', Courier, monospace" }}
+              value={inv.company_name} onChange={(e) => setInv({ ...inv, company_name: e.target.value.toUpperCase() })} />
+          </h1>
+          <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 11, lineHeight: 1.5, textAlign: "center", color: "#333", borderBottom: "none" }}
+            rows={2} value={inv.company_address} onChange={(e) => setInv({ ...inv, company_address: e.target.value })} />
+          <input className="edt" style={{ ...edt, fontSize: 11.5, fontWeight: "bold", textAlign: "center", width: "100%", color: "#222", marginTop: 3, borderBottom: "none" }}
+            value={inv.company_pan} onChange={(e) => setInv({ ...inv, company_pan: e.target.value })} />
         </div>
 
         {/* MAIN TABLE */}
@@ -635,12 +654,18 @@ export default function InvoiceCreate() {
             {/* --- SERVICE DESCRIPTION --- */}
             <tr>
               <td style={{ padding: "12px 10px", lineHeight: 1.8 }}>
-                <strong>Bill for Providing Services for{" "}
+                <strong>
+                  <input className="edt" style={{ ...edt, width: "100%", fontSize: 13, borderBottom: "none" }}
+                    value={inv.service_desc} onChange={(e) => setInv({ ...inv, service_desc: e.target.value })} />
+                  {" "}
                   <select className="edt-select" value={inv.route} onChange={(e) => setInv({ ...inv, route: e.target.value })}>
                     <option value="">--Route--</option>
                     {locations.map((loc) => <option key={loc} value={loc}>{loc.replace("-", " to ")}</option>)}
                   </select>
-                  {" "}sending{"\u00A0\u00A0"}sample</strong>
+                  {" "}
+                  <input className="edt" style={{ ...edt, width: 140, fontSize: 13, borderBottom: "none" }}
+                    value={inv.service_suffix} onChange={(e) => setInv({ ...inv, service_suffix: e.target.value })} />
+                </strong>
               </td>
               <td></td><td></td><td></td><td></td><td></td>
             </tr>
@@ -745,7 +770,10 @@ export default function InvoiceCreate() {
                 <strong style={{ fontSize: 15, color: "#111" }}>{amtWords || ""}</strong>
               </td>
               <td colSpan={3} style={{ textAlign: "right", verticalAlign: "top", padding: "10px" }}>
-                <div style={{ fontWeight: "bold", fontSize: 13, marginBottom: 4 }}>For Swati Tours &amp; Transport</div>
+                <div style={{ fontWeight: "bold", fontSize: 13, marginBottom: 4 }}>
+                  <input className="edt" style={{ ...edt, fontSize: 13, textAlign: "right", width: "100%", borderBottom: "none" }}
+                    value={inv.signature_label} onChange={(e) => setInv({ ...inv, signature_label: e.target.value })} />
+                </div>
                 {stampImg && <img src={stampImg} alt="Stamp" style={{ width: 120, height: "auto", opacity: 0.9, marginTop: 4 }} />}
               </td>
             </tr>
@@ -759,7 +787,8 @@ export default function InvoiceCreate() {
                 <div style={{ padding: "8px 10px" }}>
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 11, color: "#555", marginBottom: 4 }}>Name</div>
-                    <div style={{ borderBottom: "1px dashed #999", minHeight: 18 }}></div>
+                    <input className="edt" style={{ ...edt, width: "100%", fontSize: 12 }}
+                      value={inv.received_name} onChange={(e) => setInv({ ...inv, received_name: e.target.value })} />
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 11, color: "#555", marginBottom: 4 }}>Stamp / Sign</div>
@@ -767,7 +796,8 @@ export default function InvoiceCreate() {
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: "#555", marginBottom: 4 }}>Date</div>
-                    <div style={{ borderBottom: "1px dashed #999", minHeight: 18 }}></div>
+                    <input className="edt" style={{ ...edt, width: "100%", fontSize: 12 }}
+                      value={inv.received_date} onChange={(e) => setInv({ ...inv, received_date: e.target.value })} />
                   </div>
                 </div>
               </td>
@@ -776,11 +806,26 @@ export default function InvoiceCreate() {
                   Bank Details
                 </div>
                 <div style={{ padding: "8px 10px", fontSize: 11.5, lineHeight: 1.8 }}>
-                  <div><span style={{ color: "#555" }}>Banker Name:</span> <strong>Bank of India</strong></div>
-                  <div><span style={{ color: "#555" }}>Account Holder:</span> <strong>Swati Tours and Transport</strong></div>
-                  <div><span style={{ color: "#555" }}>Account No:</span> <strong>061320110001257</strong></div>
-                  <div><span style={{ color: "#555" }}>IFSC:</span> <strong>BKID0000613</strong></div>
-                  <div><span style={{ color: "#555" }}>Branch:</span> <strong>Vishrantwadi, Pune</strong></div>
+                  <div><span style={{ color: "#555" }}>Banker Name:</span>{" "}
+                    <input className="edt" style={{ ...edt, fontSize: 11.5, width: 160 }}
+                      value={inv.bank_name} onChange={(e) => setInv({ ...inv, bank_name: e.target.value })} />
+                  </div>
+                  <div><span style={{ color: "#555" }}>Account Holder:</span>{" "}
+                    <input className="edt" style={{ ...edt, fontSize: 11.5, width: 200 }}
+                      value={inv.bank_account_holder} onChange={(e) => setInv({ ...inv, bank_account_holder: e.target.value })} />
+                  </div>
+                  <div><span style={{ color: "#555" }}>Account No:</span>{" "}
+                    <input className="edt" style={{ ...edt, fontSize: 11.5, width: 160 }}
+                      value={inv.bank_account_no} onChange={(e) => setInv({ ...inv, bank_account_no: e.target.value })} />
+                  </div>
+                  <div><span style={{ color: "#555" }}>IFSC:</span>{" "}
+                    <input className="edt" style={{ ...edt, fontSize: 11.5, width: 140 }}
+                      value={inv.bank_ifsc} onChange={(e) => setInv({ ...inv, bank_ifsc: e.target.value })} />
+                  </div>
+                  <div><span style={{ color: "#555" }}>Branch:</span>{" "}
+                    <input className="edt" style={{ ...edt, fontSize: 11.5, width: 160 }}
+                      value={inv.bank_branch} onChange={(e) => setInv({ ...inv, bank_branch: e.target.value })} />
+                  </div>
                 </div>
               </td>
             </tr>

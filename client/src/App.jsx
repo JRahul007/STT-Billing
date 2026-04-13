@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, Component } from "react";
 import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
 import Billing from "./pages/Billing";
@@ -8,9 +8,53 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 
+function safeParseJSON(str, fallback = {}) {
+  try {
+    const parsed = JSON.parse(str);
+    return parsed && typeof parsed === "object" ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f2f5" }}>
+          <div style={{ textAlign: "center", padding: 40, background: "#fff", borderRadius: 16, boxShadow: "0 2px 20px rgba(0,0,0,0.1)" }}>
+            <h2 style={{ marginBottom: 12 }}>Something went wrong</h2>
+            <p style={{ color: "#666", marginBottom: 20 }}>The app encountered an error. Please try logging in again.</p>
+            <button
+              style={{ padding: "10px 24px", background: "#4361ee", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14 }}
+              onClick={() => {
+                localStorage.removeItem("auth_token");
+                localStorage.removeItem("auth_user");
+                window.location.href = "/login";
+              }}
+            >Go to Login</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem("auth_token");
-  if (!token) return <Navigate to="/login" replace />;
+  if (!token || token === "undefined" || token === "null") {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_user");
+    return <Navigate to="/login" replace />;
+  }
   return children;
 }
 
@@ -20,7 +64,7 @@ function AppLayout() {
   const [logo, setLogo] = useState(() => localStorage.getItem("app_logo") || "");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const logoInputRef = useRef(null);
-  const user = JSON.parse(localStorage.getItem("auth_user") || "{}");
+  const user = safeParseJSON(localStorage.getItem("auth_user"));
 
   // Auto-close sidebar on route change (mobile)
   useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
@@ -97,15 +141,17 @@ function AppLayout() {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/*" element={
-        <ProtectedRoute>
-          <AppLayout />
-        </ProtectedRoute>
-      } />
-    </Routes>
+    <ErrorBoundary>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/*" element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        } />
+      </Routes>
+    </ErrorBoundary>
   );
 }
