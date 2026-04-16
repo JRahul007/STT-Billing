@@ -71,3 +71,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_parties_type_name_unique
   ON billing_parties (party_type, UPPER(name));
 
 CREATE INDEX IF NOT EXISTS idx_billing_parties_type ON billing_parties(party_type);
+
+-- =====================================================================
+-- vehicles
+-- =====================================================================
+-- Stores vehicle trip records. Each row = one trip entry shown
+-- in the Vehicle page table. The invoice PDF is generated client-side
+-- from these fields (no invoice_data blob needed).
+CREATE TABLE IF NOT EXISTS vehicles (
+  id              BIGSERIAL PRIMARY KEY,
+  invoice_no      TEXT        NOT NULL UNIQUE,
+  date            DATE        NOT NULL,               -- bill date (beside invoice no.)
+  trip_date       DATE,                               -- actual trip date (in description)
+  client_name     TEXT,
+  description     TEXT,
+  rate            NUMERIC(12,2),
+  trip            TEXT,                                -- text: can be "2", "1A", "Round Trip" etc.
+  start_km        NUMERIC(12,2),
+  end_km          NUMERIC(12,2),
+  amount          NUMERIC(12,2),
+  expenses        NUMERIC(12,2),
+  remark          TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_vehicles_date       ON vehicles(date);
+CREATE INDEX IF NOT EXISTS idx_vehicles_client     ON vehicles(client_name);
+CREATE INDEX IF NOT EXISTS idx_vehicles_created_at ON vehicles(created_at DESC);

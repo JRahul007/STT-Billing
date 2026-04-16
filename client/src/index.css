@@ -72,6 +72,7 @@ a {
   margin-left: 250px;
   flex: 1;
   padding: 30px;
+  min-width: 0; /* Prevent flex child from overflowing */
 }
 
 /* Page Header */
@@ -123,7 +124,8 @@ a {
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table-container table {
@@ -140,6 +142,7 @@ a {
   text-transform: uppercase;
   color: #666;
   border-bottom: 1px solid #eee;
+  white-space: nowrap;
 }
 
 .table-container td {
@@ -205,6 +208,7 @@ a {
 .btn-group {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* Forms */
@@ -297,8 +301,6 @@ a {
   color: #1a1a2e;
   margin-bottom: 16px;
 }
-
-.stat-card.red .value { color: #e63946; }
 
 /* Empty state */
 .empty-state {
@@ -496,6 +498,14 @@ a {
 }
 
 /* ============================================
+   Invoice page scroll wrapper
+   ============================================ */
+.inv-scroll-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ============================================
    RESPONSIVE — TABLET (≤ 1024px)
    ============================================ */
 @media (max-width: 1024px) {
@@ -510,6 +520,11 @@ a {
   }
   .modal {
     width: 92vw;
+  }
+
+  /* Invoice page: allow horizontal scroll */
+  .inv-page {
+    min-width: 800px;
   }
 }
 
@@ -540,6 +555,7 @@ a {
   .main-content {
     margin-left: 0;
     padding: 70px 14px 20px;
+    overflow-x: hidden;
   }
 
   /* Page header stacks */
@@ -553,7 +569,7 @@ a {
     font-size: 20px;
   }
 
-  /* Stats grid: single column */
+  /* Stats grid: 2 columns */
   .stats-grid {
     grid-template-columns: 1fr 1fr;
     gap: 12px;
@@ -563,7 +579,7 @@ a {
     padding: 14px;
   }
   .stat-card .value {
-    font-size: 20px;
+    font-size: 20px !important;
   }
   .stat-card .label {
     font-size: 11px;
@@ -571,11 +587,10 @@ a {
 
   /* Tables: horizontal scroll */
   .table-container {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    border-radius: 10px;
   }
   .table-container table {
-    min-width: 640px;
+    min-width: 700px;
   }
   .table-container th,
   .table-container td {
@@ -635,6 +650,38 @@ a {
     font-size: 14px;
   }
 
+  /* ---- Filter bar overrides (inline style flex containers) ---- */
+  .chart-card > div[style*="display"] {
+    gap: 10px !important;
+  }
+
+  /* ---- All inline modals (position:fixed overlays) ---- */
+  div[style*="position: fixed"][style*="background: rgba"] > div[style*="background: #fff"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: auto 0 0 0;
+    border-radius: 16px 16px 0 0 !important;
+    max-height: 92vh !important;
+    padding: 18px !important;
+  }
+
+  /* ---- Inline form grids: force single column ---- */
+  div[style*="gridTemplateColumns"] {
+    grid-template-columns: 1fr !important;
+  }
+  /* Allow full-width span items to remain full width */
+  div[style*="gridColumn: \"1 / -1\""],
+  div[style*="grid-column"] {
+    grid-column: 1 / -1;
+  }
+
+  /* ---- InvoiceCreate extras dropdown ---- */
+  div[style*="width: 340"] {
+    width: calc(100vw - 28px) !important;
+    max-width: 340px !important;
+    right: -60px !important;
+  }
+
   /* Auth */
   .auth-card {
     width: 100%;
@@ -643,6 +690,14 @@ a {
   }
   .auth-header h1 {
     font-size: 20px;
+  }
+
+  /* Recharts responsive */
+  .recharts-wrapper {
+    max-width: 100% !important;
+  }
+  .recharts-surface {
+    max-width: 100% !important;
   }
 }
 
@@ -659,6 +714,53 @@ a {
   .page-header h1 {
     font-size: 18px;
   }
+
+  .stat-card .value {
+    font-size: 18px !important;
+  }
+  .stat-card .label {
+    font-size: 10px;
+    word-break: break-word;
+  }
+
+  /* Filter bars: stack vertically */
+  .chart-card > div[style*="display"] {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+  .chart-card > div[style*="display"] > div[style*="display"] {
+    width: 100%;
+  }
+  .chart-card > div[style*="display"] > div[style*="display"] select {
+    width: 100%;
+    flex: 1;
+  }
+  .chart-card > div[style*="display"] > span[style*="marginLeft"] {
+    margin-left: 0 !important;
+    text-align: center;
+  }
+
+  /* Smaller table min-width on very small screens */
+  .table-container table {
+    min-width: 600px;
+  }
+  .table-container th,
+  .table-container td {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  /* Export buttons stack */
+  .chart-card > div[style*="justifyContent"] {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+  .chart-card > div[style*="justifyContent"] > div[style*="display"] {
+    flex-wrap: wrap !important;
+  }
+
+  /* Auth */
   .auth-card {
     padding: 22px 18px;
     border-radius: 12px;
@@ -669,5 +771,60 @@ a {
   .auth-code-display strong {
     font-size: 22px;
     letter-spacing: 4px;
+  }
+
+  /* Billing/Vehicle page header: stack button below title */
+  .main-content > div:first-child[style*="justifyContent"] {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+  .main-content > div:first-child[style*="justifyContent"] > h1 {
+    font-size: 18px !important;
+  }
+  .main-content > div:first-child[style*="justifyContent"] > button {
+    width: 100%;
+  }
+
+  /* InvoiceCreate toolbar: wrap better */
+  .no-print[style*="justifyContent"] > div[style*="display"] {
+    width: 100%;
+  }
+  .no-print[style*="justifyContent"] > div[style*="display"] > button,
+  .no-print[style*="justifyContent"] > div[style*="display"] > div {
+    flex: 1;
+    min-width: 0;
+  }
+  .no-print[style*="justifyContent"] > div[style*="display"] > input {
+    width: 100% !important;
+  }
+
+  /* Extras dropdown: full width */
+  div[style*="width: 340"] {
+    width: calc(100vw - 20px) !important;
+    right: -10px !important;
+    left: auto !important;
+  }
+}
+
+/* ============================================
+   RESPONSIVE — TINY MOBILE (≤ 360px)
+   ============================================ */
+@media (max-width: 360px) {
+  .main-content {
+    padding: 60px 8px 14px;
+  }
+  .chart-card {
+    padding: 10px;
+  }
+  .stat-card {
+    padding: 10px;
+  }
+  .stat-card .value {
+    font-size: 16px !important;
+  }
+  .btn {
+    padding: 8px 10px;
+    font-size: 13px;
   }
 }
