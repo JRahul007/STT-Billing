@@ -15,8 +15,9 @@ export default function InvoiceView() {
       </p>
       <div style={{ marginTop: 30, padding: 20, border: "2px solid #000", display: "inline-block" }}>
         <div style={{ fontWeight: "bold", fontSize: 17 }}>SWATI TOURS &amp; TRANSPORT</div>
-        <div style={{ fontSize: 11, marginTop: 4 }}>ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE,</div>
-        <div style={{ fontSize: 11 }}>NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084</div>
+        <div style={{ fontSize: 11, marginTop: 4 }}>A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS,</div>
+        <div style={{ fontSize: 11 }}>CHAROLI, PUNE-412105</div>
+        <div style={{ fontSize: 11, marginTop: 3 }}>Contact: 8291301603 | Email: pune.stt@gmail.com</div>
         <div style={{ fontSize: 12, fontWeight: "bold", marginTop: 4 }}>UAM MH19D0152647 / PAN BSNPP7564G</div>
         <div style={{ fontSize: 16, fontWeight: "bold", marginTop: 12, background: "#FFFF00", display: "inline-block", padding: "4px 20px" }}>
           Invoice No: {inv}

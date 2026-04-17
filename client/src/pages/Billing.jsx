@@ -14,14 +14,14 @@ import {
   updateParty,
   deleteParty,
 } from "../services/api";
-import defaultStamp from "../defaultStamp";
+import { getDefaultStamp } from "../defaultStamp";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const DEFAULT_CONSIGNER = {
   name: "SWATI TOURS & TRANSPORT",
-  address: "ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084",
-  mobile: "",
+  address: "A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS, CHAROLI, PUNE-412105",
+  mobile: "+91 8291301603",
 };
 
 const DEFAULT_CONSIGNEE = {
@@ -93,6 +93,20 @@ function buildDefaultBillingForm(consigners = [], consignees = []) {
 }
 
 const defaultLocations = ["BOM-PUNE", "PUNE-BOM", "BOM-GOA", "GOA-BOM", "IDR-BOM", "BOM-IDR"];
+
+const INVOICE_PREFIX = "STT-";
+
+function getNextInvoiceNo(billings) {
+  let max = 0;
+  for (const b of billings || []) {
+    const m = /^STT-0*(\d+)$/i.exec(String(b?.invoice_no || "").trim());
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > max) max = n;
+    }
+  }
+  return `${INVOICE_PREFIX}${String(max + 1).padStart(3, "0")}`;
+}
 
 // Extract extra charges as [{description, amount}] from a billing record
 function getExtraChargeItems(b) {
@@ -838,7 +852,7 @@ export default function Billing() {
     } catch (e) { /* ignore */ }
 
     // Get stamp from localStorage
-    const stampBase64 = localStorage.getItem("stamp_image") || defaultStamp;
+    const stampBase64 = localStorage.getItem("stamp_image") || await getDefaultStamp();
 
     const invoiceHTML = `<!DOCTYPE html>
 <html>
@@ -875,13 +889,14 @@ export default function Billing() {
   </div>
   <div class="inv-head">
     <h1>SWATI TOURS &amp; TRANSPORT</h1>
-    <p class="addr">ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084</p>
+    <p class="addr">A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS, CHAROLI, PUNE-412105</p>
+    <p class="addr">Contact: 8291301603 &nbsp;|&nbsp; Email: pune.stt@gmail.com</p>
     <p class="pan">UAM MH19D0152647 / PAN BSNPP7564G</p>
   </div>
   <table class="it">
     <colgroup><col style="width:32%"/><col style="width:33%"/><col style="width:15%"/><col style="width:20%"/></colgroup>
     <tbody>
-      <tr><td class="lbl">Consignor's</td><td class="lbl">CONSIGNEE</td><td class="lbl" style="text-align:center;">INVOICE No</td><td class="lbl" style="text-align:center;">Dated</td></tr>
+      <tr><td class="lbl">Consignor's</td><td class="lbl">CONSIGNEE</td><td class="lbl" style="text-align:center;">INVOICE No</td><td class="lbl" style="text-align:center;">Date</td></tr>
       <tr>
         <td style="padding:10px; line-height:1.7;">
           <strong style="font-size:13px;">${formatPartyName(consigner.name)}</strong><br/>
@@ -1015,7 +1030,7 @@ export default function Billing() {
       barcodeDataUrl = barcodeCanvas.toDataURL("image/png");
     } catch (e) { /* ignore */ }
 
-    const stampBase64 = localStorage.getItem("stamp_image") || defaultStamp;
+    const stampBase64 = localStorage.getItem("stamp_image") || await getDefaultStamp();
 
     // Create hidden container for invoice rendering
     const container = document.createElement("div");
@@ -1033,7 +1048,8 @@ export default function Billing() {
   </div>
   <div style="text-align:center; padding:14px 20px 10px; border-bottom:3px double #222; background:linear-gradient(180deg,#fafafa 0%,#fff 100%);">
     <h1 style="font-size:20px; font-weight:bold; letter-spacing:3px; color:#b71c1c; margin:0 0 4px; font-family:'Courier New',Courier,monospace;">SWATI TOURS &amp; TRANSPORT</h1>
-    <p style="font-size:11px; line-height:1.5; margin:0; color:#333;">ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084</p>
+    <p style="font-size:11px; line-height:1.5; margin:0; color:#333;">A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS, CHAROLI, PUNE-412105</p>
+    <p style="font-size:11px; margin:3px 0 0; color:#333;">Contact: 8291301603 &nbsp;|&nbsp; Email: pune.stt@gmail.com</p>
     <p style="font-size:11.5px; font-weight:bold; margin-top:3px; color:#222;">UAM MH19D0152647 / PAN BSNPP7564G</p>
   </div>
   <table style="width:100%; border-collapse:collapse; position:relative; z-index:1;">
@@ -1043,7 +1059,7 @@ export default function Billing() {
         <td style="border:1px solid #333; padding:6px 10px; font-weight:bold; font-size:12px; background:rgba(245,245,245,0.6); color:#222;">Consignor's</td>
         <td style="border:1px solid #333; padding:6px 10px; font-weight:bold; font-size:12px; background:rgba(245,245,245,0.6); color:#222;">CONSIGNEE</td>
         <td style="border:1px solid #333; padding:6px 10px; font-weight:bold; font-size:12px; background:rgba(245,245,245,0.6); color:#222; text-align:center;">INVOICE No</td>
-        <td style="border:1px solid #333; padding:6px 10px; font-weight:bold; font-size:12px; background:rgba(245,245,245,0.6); color:#222; text-align:center;">Dated</td>
+        <td style="border:1px solid #333; padding:6px 10px; font-weight:bold; font-size:12px; background:rgba(245,245,245,0.6); color:#222; text-align:center;">Date</td>
       </tr>
       <tr>
         <td style="border:1px solid #333; padding:10px; line-height:1.7; vertical-align:top; font-size:13px;">
@@ -1214,7 +1230,11 @@ export default function Billing() {
         <h1>Billing Details</h1>
         <button
           className="btn btn-primary"
-          onClick={() => { setEditing(null); setForm(buildDefaultBillingForm(consigners, consignees)); setShowModal(true); }}
+          onClick={() => {
+            setEditing(null);
+            setForm({ ...buildDefaultBillingForm(consigners, consignees), invoice_no: getNextInvoiceNo(billings) });
+            setShowModal(true);
+          }}
         >
           + Add Billing
         </button>
@@ -1426,7 +1446,19 @@ export default function Billing() {
             <form onSubmit={handleSubmit}>
               <div className="form-group">
                 <label>Invoice No.</label>
-                <input required value={form.invoice_no} onChange={(e) => setForm({ ...form, invoice_no: e.target.value })} />
+                <div style={{ display: "flex", alignItems: "stretch", border: "1.5px solid #e6e8f2", borderRadius: 10, overflow: "hidden", background: "#fafbff" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", padding: "0 14px", background: "linear-gradient(135deg,#eef0fa,#e2e6f5)", color: "#334155", fontWeight: 700, fontSize: 14, letterSpacing: "0.04em", borderRight: "1px solid #e6e8f2", userSelect: "none" }}>STT-</span>
+                  <input
+                    required
+                    value={(form.invoice_no || "").replace(/^STT-/i, "")}
+                    onChange={(e) => {
+                      const suffix = e.target.value.replace(/^STT-/i, "").replace(/[^A-Za-z0-9\-]/g, "");
+                      setForm({ ...form, invoice_no: `STT-${suffix}` });
+                    }}
+                    placeholder="001"
+                    style={{ border: "none", flex: 1, padding: "11px 14px", background: "transparent", outline: "none", fontSize: 14, fontFamily: "inherit", color: "#0f172a" }}
+                  />
+                </div>
               </div>
               <div className="form-group">
                 <label>Date</label>

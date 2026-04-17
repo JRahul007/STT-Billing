@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import JsBarcode from "jsbarcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
-import defaultStamp from "../defaultStamp";
+import defaultStamp, { getDefaultStamp } from "../defaultStamp";
 
 const defaultLocations = ["BOM-PUNE", "PUNE-BOM", "BOM-GOA", "GOA-BOM", "IDR-BOM", "BOM-IDR"];
 
@@ -40,10 +40,15 @@ export default function InvoiceCreate() {
   const [stampImg, setStampImg] = useState("");
   const stampInputRef = useRef(null);
 
-  // Load stamp: localStorage first, then fallback to default stamp
+  // Load stamp: localStorage first, then bundled /stamp_image.png, then SVG fallback
   useEffect(() => {
     const saved = localStorage.getItem("stamp_image");
-    setStampImg(saved || defaultStamp);
+    if (saved) {
+      setStampImg(saved);
+      return;
+    }
+    setStampImg(defaultStamp);
+    getDefaultStamp().then((url) => setStampImg(url));
   }, []);
 
   const handleStampUpload = (e) => {
@@ -66,8 +71,8 @@ export default function InvoiceCreate() {
     client_address: " Center, R65, TTC, Rabale, Navi Mumbai, Maharashtra 400701",
     client_phone: "+91 7588712196",
     consigner_name: "SWATI TOURS & TRANSPORT",
-    consigner_address: "ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084",
-    consigner_mobile: "",
+    consigner_address: "A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS, CHAROLI, PUNE-412105",
+    consigner_mobile: "+91 8291301603",
     consignee_name: "Equinox Labs Pvt.Ltd",
     consignee_address: " Center, R65, TTC, Rabale, Navi Mumbai, Maharashtra 400701",
     consignee_mobile: "+91 7588712196",
@@ -94,7 +99,8 @@ export default function InvoiceCreate() {
     other_amount: "",
     // Editable header & footer fields
     company_name: "SWATI TOURS & TRANSPORT",
-    company_address: "ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084",
+    company_address: "A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS, CHAROLI, PUNE-412105",
+    company_contact: "Contact: 8291301603 | Email: pune.stt@gmail.com",
     company_pan: "UAM MH19D0152647 / PAN BSNPP7564G",
     service_desc: "Bill for Providing Services for",
     service_suffix: "sending\u00A0\u00A0sample",
@@ -106,6 +112,11 @@ export default function InvoiceCreate() {
     bank_branch: "Vishrantwadi, Pune",
     received_name: "",
     received_date: "",
+    // Monthly Billing Invoice
+    is_monthly: false,
+    monthly_amount: "",
+    monthly_from: "",
+    monthly_to: "",
   });
 
   const initialized = useRef(false);
@@ -148,11 +159,31 @@ export default function InvoiceCreate() {
   const pickupRate = Number(inv.pickup_rate) || 600;
   const pickupTotal = inv.pickup_entries.length * pickupRate;
   const otherAmount = Number(inv.other_amount) || 0;
-  const totalAmount = weightAmount
+  const monthlyAmount = Number(inv.monthly_amount) || 0;
+  const baseAmount = inv.is_monthly ? monthlyAmount : weightAmount;
+  const totalAmount = baseAmount
     + (inv.show_packaging ? packagingAmount : 0)
     + (inv.show_oda ? odaAmount : 0)
     + (inv.show_pickup ? pickupTotal : 0)
     + (inv.show_other ? otherAmount : 0);
+
+  // Monthly label helpers
+  const MONTH_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const monthlyLabel = (() => {
+    const src = inv.monthly_from || inv.monthly_to;
+    if (!src) return "";
+    const d = new Date(src + "T00:00:00");
+    if (isNaN(d.getTime())) return "";
+    return `${MONTH_FULL[d.getMonth()].toUpperCase()} ${d.getFullYear()}`;
+  })();
+  const fmtDMY = (s) => {
+    if (!s) return "";
+    const d = new Date(s + "T00:00:00");
+    if (isNaN(d.getTime())) return "";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    return `${dd}-${mm}-${d.getFullYear()}`;
+  };
   const routeDisplay = inv.route ? inv.route.replace("-", " to ") : "";
   const dateObj = inv.date ? new Date(inv.date + "T00:00:00") : null;
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -160,21 +191,36 @@ export default function InvoiceCreate() {
     ? dateObj.getDate().toString().padStart(2, "0") + "-" + months[dateObj.getMonth()] + "-" + String(dateObj.getFullYear()).slice(-2)
     : "";
   const amtWords = totalAmount > 0 ? numberToWords(Math.floor(totalAmount)) + " Rupees Only" : "";
-  /* Render barcode whenever invoice_no changes */
+  /* Render barcode whenever invoice_no or layout (monthly toggle) changes */
   useEffect(() => {
     if (barcodeRef.current && inv.invoice_no) {
       try {
-        JsBarcode(barcodeRef.current, inv.invoice_no, {
+        JsBarcode(barcodeRef.current, String(inv.invoice_no), {
           format: "CODE128",
-          width: 1.8,
-          height: 40,
+          width: 1.6,
+          height: 36,
           displayValue: false,
           margin: 2,
           background: "transparent",
         });
       } catch (e) { /* ignore */ }
     }
-  }, [inv.invoice_no]);
+  }, [inv.invoice_no, inv.is_monthly]);
+
+  /* Monthly mode: auto-set invoice_no as STT/MM/YY based on month being billed */
+  useEffect(() => {
+    if (!inv.is_monthly) return;
+    const src = inv.monthly_from || inv.date;
+    if (!src) return;
+    const d = new Date(src + "T00:00:00");
+    if (isNaN(d.getTime())) return;
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = String(d.getFullYear()).slice(-2);
+    const expected = `STT/${mm}/${yy}`;
+    if (inv.invoice_no !== expected) {
+      setInv((prev) => ({ ...prev, invoice_no: expected }));
+    }
+  }, [inv.is_monthly, inv.monthly_from, inv.date]);
 
   // Auto-download PDF when navigated from Billing with ?autodownload param
   const autoDownloadDone = useRef(false);
@@ -360,6 +406,11 @@ export default function InvoiceCreate() {
           <input ref={stampInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleStampUpload} />
           <button className="btn btn-sm" style={{ background: stampImg ? "#28a745" : "#e63946", color: "#fff", padding: "8px 14px", borderRadius: 8 }}
             onClick={() => stampInputRef.current.click()}>{stampImg ? "Stamp Uploaded" : "Upload Stamp"}</button>
+          <button className="btn btn-sm"
+            style={{ background: inv.is_monthly ? "#6366f1" : "#555", color: "#fff", padding: "8px 14px", borderRadius: 8 }}
+            onClick={() => setInv({ ...inv, is_monthly: !inv.is_monthly })}>
+            {inv.is_monthly ? "Monthly ✓" : "Monthly Bill"}
+          </button>
           <div style={{ position: "relative" }}>
             <button className="btn btn-sm"
               style={{ background: (inv.show_packaging || inv.show_oda || inv.show_pickup || inv.show_other) ? "#4361ee" : "#555", color: "#fff", padding: "8px 14px", borderRadius: 8 }}
@@ -561,6 +612,8 @@ export default function InvoiceCreate() {
           </h1>
           <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 11, lineHeight: 1.5, textAlign: "center", color: "#333", borderBottom: "none" }}
             rows={2} value={inv.company_address} onChange={(e) => setInv({ ...inv, company_address: e.target.value })} />
+          <input className="edt" style={{ ...edt, fontSize: 11, textAlign: "center", width: "100%", color: "#333", marginTop: 3, borderBottom: "none" }}
+            value={inv.company_contact || ""} onChange={(e) => setInv({ ...inv, company_contact: e.target.value })} />
           <input className="edt" style={{ ...edt, fontSize: 11.5, fontWeight: "bold", textAlign: "center", width: "100%", color: "#222", marginTop: 3, borderBottom: "none" }}
             value={inv.company_pan} onChange={(e) => setInv({ ...inv, company_pan: e.target.value })} />
         </div>
@@ -575,57 +628,100 @@ export default function InvoiceCreate() {
           </colgroup>
           <tbody>
 
-            {/* --- CONSIGNOR / CONSIGNEE / INVOICE / DATE HEADERS --- */}
-            <tr>
-              <td className="lbl">Consignor's</td>
-              <td className="lbl">CONSIGNEE</td>
-              <td className="lbl" style={{ textAlign: "center" }}>INVOICE No</td>
-              <td className="lbl" style={{ textAlign: "center" }}>Dated</td>
-            </tr>
+            {/* --- HEADERS: normal vs monthly --- */}
+            {inv.is_monthly ? (
+              <tr>
+                <td className="lbl" colSpan={2}>M/s</td>
+                <td className="lbl" style={{ textAlign: "center" }}>INVOICE No</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Date</td>
+              </tr>
+            ) : (
+              <tr>
+                <td className="lbl">Consignor's</td>
+                <td className="lbl">CONSIGNEE</td>
+                <td className="lbl" style={{ textAlign: "center" }}>INVOICE No</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Date</td>
+              </tr>
+            )}
 
-            {/* --- CONSIGNOR / CONSIGNEE / INVOICE / DATE VALUES --- */}
-            <tr>
-              {/* Consignor - Fixed */}
-              <td className="val" style={{ lineHeight: 1.7, padding: "10px" }}>
-                <input className="edt" style={{ ...edt, fontSize: 14, width: "100%", marginBottom: 3, textTransform: "uppercase", fontWeight: "bold" }}
-                  value={inv.consigner_name} onChange={(e) => setInv({ ...inv, consigner_name: e.target.value.toUpperCase() })} />
-                <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 10.5, lineHeight: 1.5, borderBottom: "1px dashed #999", color: "#444" }}
-                  rows={2} value={inv.consigner_address} onChange={(e) => setInv({ ...inv, consigner_address: e.target.value })} />
-                <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", marginTop: 2, color: "#444" }}
-                  value={inv.consigner_mobile} onChange={(e) => setInv({ ...inv, consigner_mobile: e.target.value })} />
-              </td>
+            {/* --- VALUES: normal vs monthly --- */}
+            {inv.is_monthly ? (
+              <tr>
+                {/* M/s - client name spanning both party columns, compact */}
+                <td className="val" colSpan={2} style={{ lineHeight: 1.35, padding: "6px 10px", verticalAlign: "middle" }}>
+                  <input className="edt" style={{ ...edt, fontSize: 13, width: "100%", marginBottom: 2, textTransform: "uppercase", fontWeight: "bold" }}
+                    value={inv.consignee_name} onChange={(e) => setInv({ ...inv, consignee_name: e.target.value.toUpperCase(), client_name: e.target.value })} />
+                  <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", color: "#444", borderBottom: "1px dashed #bbb" }}
+                    value={inv.consignee_address} onChange={(e) => setInv({ ...inv, consignee_address: e.target.value, client_address: e.target.value })} />
+                  <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", marginTop: 1, color: "#444" }}
+                    value={inv.consignee_mobile} onChange={(e) => setInv({ ...inv, consignee_mobile: e.target.value, client_phone: e.target.value })} />
+                </td>
 
-              {/* Consignee - Editable */}
-              <td className="val" style={{ lineHeight: 1.7, padding: "10px" }}>
-                <input className="edt" style={{ ...edt, fontSize: 14, width: "100%", marginBottom: 3, textTransform: "uppercase", fontWeight: "bold" }}
-                  value={inv.consignee_name} onChange={(e) => setInv({ ...inv, consignee_name: e.target.value.toUpperCase(), client_name: e.target.value })} />
-                <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 10.5, lineHeight: 1.5, borderBottom: "1px dashed #999", color: "#444" }}
-                  rows={2} value={inv.consignee_address} onChange={(e) => setInv({ ...inv, consignee_address: e.target.value, client_address: e.target.value })} />
-                <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", marginTop: 2, color: "#444" }}
-                  value={inv.consignee_mobile} onChange={(e) => setInv({ ...inv, consignee_mobile: e.target.value, client_phone: e.target.value })} />
-              </td>
+                {/* Invoice No with Barcode */}
+                <td style={{ textAlign: "center", verticalAlign: "middle", padding: "4px" }}>
+                  <svg ref={barcodeRef} style={{ display: "block", margin: "0 auto", maxWidth: "100%" }}></svg>
+                  <input
+                    className="edt"
+                    style={{ ...edt, fontSize: 17, color: "#b71c1c", letterSpacing: 0.5, marginTop: 2, textAlign: "center", width: "100%", borderBottom: "none" }}
+                    value={inv.invoice_no}
+                    onChange={(e) => setInv({ ...inv, invoice_no: e.target.value })}
+                    readOnly
+                  />
+                </td>
 
-              {/* Invoice No with Barcode */}
-              <td style={{ textAlign: "center", verticalAlign: "middle", padding: "6px 4px" }}>
-                <svg ref={barcodeRef}></svg>
-                <input
-                  className="edt"
-                  style={{ ...edt, fontSize: 22, color: "#b71c1c", letterSpacing: 1, marginTop: 2, textAlign: "center", width: "100%", borderBottom: "none" }}
-                  value={inv.invoice_no}
-                  onChange={(e) => setInv({ ...inv, invoice_no: e.target.value })}
-                />
-              </td>
+                {/* Date */}
+                <td style={{ textAlign: "center", verticalAlign: "middle", padding: "4px 6px", position: "relative" }}>
+                  <input className="edt" type="date" style={{ ...edt, fontSize: 11, width: "100%", textAlign: "center" }}
+                    value={inv.date} onChange={(e) => setInv({ ...inv, date: e.target.value })} />
+                  {dateStr && (
+                    <div style={{ fontWeight: "bold", fontSize: 13, color: "#b71c1c", marginTop: 2 }}>{dateStr}</div>
+                  )}
+                </td>
+              </tr>
+            ) : (
+              <tr>
+                {/* Consignor - Fixed */}
+                <td className="val" style={{ lineHeight: 1.7, padding: "10px" }}>
+                  <input className="edt" style={{ ...edt, fontSize: 14, width: "100%", marginBottom: 3, textTransform: "uppercase", fontWeight: "bold" }}
+                    value={inv.consigner_name} onChange={(e) => setInv({ ...inv, consigner_name: e.target.value.toUpperCase() })} />
+                  <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 10.5, lineHeight: 1.5, borderBottom: "1px dashed #999", color: "#444" }}
+                    rows={2} value={inv.consigner_address} onChange={(e) => setInv({ ...inv, consigner_address: e.target.value })} />
+                  <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", marginTop: 2, color: "#444" }}
+                    value={inv.consigner_mobile} onChange={(e) => setInv({ ...inv, consigner_mobile: e.target.value })} />
+                </td>
 
-              {/* Date */}
-              <td style={{ textAlign: "center", verticalAlign: "middle", padding: 10, position: "relative" }}>
-                {dateStr
-                  ? <div style={{ fontWeight: "bold", fontSize: 15, color: "#222", cursor: "pointer" }}
-                      onClick={() => setInv({ ...inv, date: "" })}>{dateStr}</div>
-                  : <input className="edt" type="date" style={{ ...edt, fontSize: 12, width: "100%", textAlign: "center" }}
-                      value={inv.date} onChange={(e) => setInv({ ...inv, date: e.target.value })} />
-                }
-              </td>
-            </tr>
+                {/* Consignee - Editable */}
+                <td className="val" style={{ lineHeight: 1.7, padding: "10px" }}>
+                  <input className="edt" style={{ ...edt, fontSize: 14, width: "100%", marginBottom: 3, textTransform: "uppercase", fontWeight: "bold" }}
+                    value={inv.consignee_name} onChange={(e) => setInv({ ...inv, consignee_name: e.target.value.toUpperCase(), client_name: e.target.value })} />
+                  <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 10.5, lineHeight: 1.5, borderBottom: "1px dashed #999", color: "#444" }}
+                    rows={2} value={inv.consignee_address} onChange={(e) => setInv({ ...inv, consignee_address: e.target.value, client_address: e.target.value })} />
+                  <input className="edt" style={{ ...edt, fontSize: 10.5, width: "100%", marginTop: 2, color: "#444" }}
+                    value={inv.consignee_mobile} onChange={(e) => setInv({ ...inv, consignee_mobile: e.target.value, client_phone: e.target.value })} />
+                </td>
+
+                {/* Invoice No with Barcode */}
+                <td style={{ textAlign: "center", verticalAlign: "middle", padding: "6px 4px" }}>
+                  <svg ref={barcodeRef}></svg>
+                  <input
+                    className="edt"
+                    style={{ ...edt, fontSize: 22, color: "#b71c1c", letterSpacing: 1, marginTop: 2, textAlign: "center", width: "100%", borderBottom: "none" }}
+                    value={inv.invoice_no}
+                    onChange={(e) => setInv({ ...inv, invoice_no: e.target.value })}
+                  />
+                </td>
+
+                {/* Date */}
+                <td style={{ textAlign: "center", verticalAlign: "middle", padding: 10, position: "relative" }}>
+                  {dateStr
+                    ? <div style={{ fontWeight: "bold", fontSize: 15, color: "#222", cursor: "pointer" }}
+                        onClick={() => setInv({ ...inv, date: "" })}>{dateStr}</div>
+                    : <input className="edt" type="date" style={{ ...edt, fontSize: 12, width: "100%", textAlign: "center" }}
+                        value={inv.date} onChange={(e) => setInv({ ...inv, date: e.target.value })} />
+                  }
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
 
@@ -642,67 +738,109 @@ export default function InvoiceCreate() {
           <tbody>
 
             {/* --- DESCRIPTION HEADERS --- */}
-            <tr>
-              <td className="lbl">Description of Service</td>
-              <td className="lbl" style={{ textAlign: "center" }}>Boxes</td>
-              <td className="lbl" style={{ textAlign: "center" }}>Contain</td>
-              <td className="lbl" style={{ textAlign: "center" }}>Weight</td>
-              <td className="lbl" style={{ textAlign: "center" }}>Rate/kg</td>
-              <td className="lbl" style={{ textAlign: "center" }}>Amount</td>
-            </tr>
+            {inv.is_monthly ? (
+              <tr>
+                <td className="lbl" colSpan={5}>Description of Service</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Amount</td>
+              </tr>
+            ) : (
+              <tr>
+                <td className="lbl">Description of Service</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Boxes</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Contain</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Weight</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Rate/kg</td>
+                <td className="lbl" style={{ textAlign: "center" }}>Amount</td>
+              </tr>
+            )}
 
-            {/* --- SERVICE DESCRIPTION --- */}
-            <tr>
-              <td style={{ padding: "12px 10px", lineHeight: 1.8 }}>
-                <strong>
-                  <input className="edt" style={{ ...edt, width: "100%", fontSize: 13, borderBottom: "none" }}
-                    value={inv.service_desc} onChange={(e) => setInv({ ...inv, service_desc: e.target.value })} />
-                  {" "}
-                  <select className="edt-select" value={inv.route} onChange={(e) => setInv({ ...inv, route: e.target.value })}>
-                    <option value="">--Route--</option>
-                    {locations.map((loc) => <option key={loc} value={loc}>{loc.replace("-", " to ")}</option>)}
-                  </select>
-                  {" "}
-                  <input className="edt" style={{ ...edt, width: 140, fontSize: 13, borderBottom: "none" }}
-                    value={inv.service_suffix} onChange={(e) => setInv({ ...inv, service_suffix: e.target.value })} />
-                </strong>
-              </td>
-              <td></td><td></td><td></td><td></td><td></td>
-            </tr>
+            {/* --- SERVICE DESCRIPTION / MONTHLY BILL --- */}
+            {inv.is_monthly ? (
+              <tr>
+                <td colSpan={5} style={{ padding: "14px 12px", lineHeight: 1.9, verticalAlign: "top" }}>
+                  <div style={{ fontWeight: "bold", fontSize: 14, marginBottom: 10 }}>
+                    Bill for Providing Services for The Month Of{" "}
+                    <span style={{ color: "#b71c1c" }}>{monthlyLabel || "—"}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}>
+                    <strong>From</strong>
+                    <input className="edt" type="date" style={{ ...edt, fontSize: 12, width: 150 }}
+                      value={inv.monthly_from}
+                      onChange={(e) => setInv({ ...inv, monthly_from: e.target.value })} />
+                    {inv.monthly_from && (
+                      <span style={{ fontWeight: "bold", color: "#b71c1c", fontSize: 12 }}>{fmtDMY(inv.monthly_from)}</span>
+                    )}
+                    <strong style={{ marginLeft: 8 }}>To</strong>
+                    <input className="edt" type="date" style={{ ...edt, fontSize: 12, width: 150 }}
+                      value={inv.monthly_to}
+                      onChange={(e) => setInv({ ...inv, monthly_to: e.target.value })} />
+                    {inv.monthly_to && (
+                      <span style={{ fontWeight: "bold", color: "#b71c1c", fontSize: 12 }}>{fmtDMY(inv.monthly_to)}</span>
+                    )}
+                  </div>
+                </td>
+                <td style={{ textAlign: "center", verticalAlign: "middle" }}>
+                  <input className="edt" type="number" step="0.01"
+                    style={{ ...edt, width: "90%", fontSize: 14, textAlign: "center", fontWeight: "bold" }}
+                    value={inv.monthly_amount}
+                    onChange={(e) => setInv({ ...inv, monthly_amount: e.target.value })}
+                    placeholder="0" />
+                </td>
+              </tr>
+            ) : (
+              <>
+                <tr>
+                  <td style={{ padding: "12px 10px", lineHeight: 1.8 }}>
+                    <strong>
+                      <input className="edt" style={{ ...edt, width: "100%", fontSize: 13, borderBottom: "none" }}
+                        value={inv.service_desc} onChange={(e) => setInv({ ...inv, service_desc: e.target.value })} />
+                      {" "}
+                      <select className="edt-select" value={inv.route} onChange={(e) => setInv({ ...inv, route: e.target.value })}>
+                        <option value="">--Route--</option>
+                        {locations.map((loc) => <option key={loc} value={loc}>{loc.replace("-", " to ")}</option>)}
+                      </select>
+                      {" "}
+                      <input className="edt" style={{ ...edt, width: 140, fontSize: 13, borderBottom: "none" }}
+                        value={inv.service_suffix} onChange={(e) => setInv({ ...inv, service_suffix: e.target.value })} />
+                    </strong>
+                  </td>
+                  <td></td><td></td><td></td><td></td><td></td>
+                </tr>
 
-            {/* --- WEIGHT ROW --- */}
-            <tr>
-              <td style={{ padding: "8px 10px" }}>
-                <strong>Weight</strong>{"\u00A0\u00A0"}
-                <input className="edt" type="number" step="0.01" style={{ ...edt, width: 50, textAlign: "center" }}
-                  value={inv.weight} onChange={(e) => setInv({ ...inv, weight: e.target.value })} />
-                {"\u00A0"}kgs
-              </td>
-              <td style={{ textAlign: "center", verticalAlign: "middle" }}>
-                <input className="edt" style={{ ...edt, width: 30, textAlign: "center" }}
-                  value={inv.boxes} onChange={(e) => setInv({ ...inv, boxes: e.target.value })} />
-              </td>
-              <td style={{ verticalAlign: "middle" }}>
-                <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 12, textAlign: "center" }}
-                  rows={2} value={inv.contain} onChange={(e) => setInv({ ...inv, contain: e.target.value })} />
-              </td>
-              <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold" }}>{weight || ""}</td>
-              <td style={{ textAlign: "center", verticalAlign: "middle" }}>
-                <input className="edt" type="number" step="1" style={{ ...edt, width: 50, textAlign: "center" }}
-                  value={inv.rate_per_kg} onChange={(e) => setInv({ ...inv, rate_per_kg: e.target.value })} />
-              </td>
-              <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
-                {weightAmount > 0 ? weightAmount.toFixed(0) : ""}
-              </td>
-            </tr>
+                <tr>
+                  <td style={{ padding: "8px 10px" }}>
+                    <strong>Weight</strong>{"\u00A0\u00A0"}
+                    <input className="edt" type="number" step="0.01" style={{ ...edt, width: 50, textAlign: "center" }}
+                      value={inv.weight} onChange={(e) => setInv({ ...inv, weight: e.target.value })} />
+                    {"\u00A0"}kgs
+                  </td>
+                  <td style={{ textAlign: "center", verticalAlign: "middle" }}>
+                    <input className="edt" style={{ ...edt, width: 30, textAlign: "center" }}
+                      value={inv.boxes} onChange={(e) => setInv({ ...inv, boxes: e.target.value })} />
+                  </td>
+                  <td style={{ verticalAlign: "middle" }}>
+                    <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 12, textAlign: "center" }}
+                      rows={2} value={inv.contain} onChange={(e) => setInv({ ...inv, contain: e.target.value })} />
+                  </td>
+                  <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold" }}>{weight || ""}</td>
+                  <td style={{ textAlign: "center", verticalAlign: "middle" }}>
+                    <input className="edt" type="number" step="1" style={{ ...edt, width: 50, textAlign: "center" }}
+                      value={inv.rate_per_kg} onChange={(e) => setInv({ ...inv, rate_per_kg: e.target.value })} />
+                  </td>
+                  <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
+                    {weightAmount > 0 ? weightAmount.toFixed(0) : ""}
+                  </td>
+                </tr>
+              </>
+            )}
 
             {/* --- BOX & PACKAGING ROW (optional) --- */}
             {inv.show_packaging && (
               <tr>
-                <td style={{ padding: "8px 10px" }}>
+                <td colSpan={inv.is_monthly ? 5 : 1} style={{ padding: "8px 10px" }}>
                   <strong>Box &amp; Packaging ({boxes}-Box)</strong>
                 </td>
-                <td></td><td></td><td></td><td></td>
+                {!inv.is_monthly && (<><td></td><td></td><td></td><td></td></>)}
                 <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {packagingAmount > 0 ? packagingAmount.toFixed(0) : ""}
                 </td>
@@ -712,10 +850,10 @@ export default function InvoiceCreate() {
             {/* --- ODA PICKUP ROW (optional) --- */}
             {inv.show_oda && (
               <tr>
-                <td style={{ padding: "8px 10px" }}>
+                <td colSpan={inv.is_monthly ? 5 : 1} style={{ padding: "8px 10px" }}>
                   <strong>{inv.oda_location} Pickup-ODA Location ({inv.oda_person})</strong>
                 </td>
-                <td></td><td></td><td></td><td></td>
+                {!inv.is_monthly && (<><td></td><td></td><td></td><td></td></>)}
                 <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {odaAmount > 0 ? odaAmount.toFixed(0) : ""}
                 </td>
@@ -725,10 +863,10 @@ export default function InvoiceCreate() {
             {/* --- PICKUP CHARGES ROWS (optional, one per person) --- */}
             {inv.show_pickup && inv.pickup_entries.map((name, i) => (
               <tr key={`pickup-${i}`}>
-                <td style={{ padding: "8px 10px" }}>
+                <td colSpan={inv.is_monthly ? 5 : 1} style={{ padding: "8px 10px" }}>
                   <strong>Pickup Charges ({name})</strong>
                 </td>
-                <td></td><td></td><td></td><td></td>
+                {!inv.is_monthly && (<><td></td><td></td><td></td><td></td></>)}
                 <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {pickupRate}
                 </td>
@@ -738,10 +876,10 @@ export default function InvoiceCreate() {
             {/* --- OTHER CHARGES ROW (optional) --- */}
             {inv.show_other && inv.other_desc && (
               <tr>
-                <td style={{ padding: "8px 10px" }}>
+                <td colSpan={inv.is_monthly ? 5 : 1} style={{ padding: "8px 10px" }}>
                   <strong>{inv.other_desc}</strong>
                 </td>
-                <td></td><td></td><td></td><td></td>
+                {!inv.is_monthly && (<><td></td><td></td><td></td><td></td></>)}
                 <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
                   {otherAmount > 0 ? otherAmount.toFixed(0) : ""}
                 </td>
@@ -749,9 +887,19 @@ export default function InvoiceCreate() {
             )}
 
             {/* --- SPACER --- */}
-            <tr><td style={{ height: 25 }}></td><td></td><td></td><td></td><td></td><td></td></tr>
-            <tr><td style={{ height: 25 }}></td><td></td><td></td><td></td><td></td><td></td></tr>
-            <tr><td style={{ height: 25 }}></td><td></td><td></td><td></td><td></td><td></td></tr>
+            {inv.is_monthly ? (
+              <>
+                <tr><td colSpan={5} style={{ height: 25 }}></td><td></td></tr>
+                <tr><td colSpan={5} style={{ height: 25 }}></td><td></td></tr>
+                <tr><td colSpan={5} style={{ height: 25 }}></td><td></td></tr>
+              </>
+            ) : (
+              <>
+                <tr><td style={{ height: 25 }}></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><td style={{ height: 25 }}></td><td></td><td></td><td></td><td></td><td></td></tr>
+                <tr><td style={{ height: 25 }}></td><td></td><td></td><td></td><td></td><td></td></tr>
+              </>
+            )}
 
             {/* --- TOTAL ROW --- */}
             <tr style={{ background: "#f5f5f5" }}>

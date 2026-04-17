@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import JsBarcode from "jsbarcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
-import defaultStamp from "../defaultStamp";
+import { getDefaultStamp } from "../defaultStamp";
 
 const STORAGE_KEY = "vehicle_entries";
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -128,7 +128,7 @@ export default function Vehicle() {
     const tripDateStr = fmtDate(en.trip_date || en.date);
     const totalAmt = Number(en.amount) || 0;
     const amtWords = totalAmt > 0 ? numberToWords(Math.floor(totalAmt)) + " Rupees Only" : "";
-    const stampBase64 = localStorage.getItem("stamp_image") || defaultStamp;
+    const stampBase64 = localStorage.getItem("stamp_image") || await getDefaultStamp();
 
     let barcodeDataUrl = "";
     try {
@@ -160,8 +160,8 @@ export default function Vehicle() {
   <!-- HEADER (same as billing) -->
   <div style="text-align:center; padding:14px 20px 10px; border-bottom:3px double #222; background:linear-gradient(180deg,#fafafa 0%,#fff 100%); position:relative; z-index:1;">
     <h1 style="font-size:20px; font-weight:bold; letter-spacing:3px; color:#b71c1c; margin:0 0 4px; font-family:'Courier New',Courier,monospace;">SWATI TOURS &amp; TRANSPORT</h1>
-    <p style="font-size:11px; line-height:1.5; margin:0; color:#333;">ROOM NO 4, RAM NAGIN TIWARI BHUVAN ASALFA VILLAGE, NEAR SHRI RAM APTGHATKOPAR WEST MUMBAI 400084</p>
-    <p style="font-size:11px; margin:3px 0 0; color:#333;">Mobile: 8291301603 &nbsp;|&nbsp; Email: pune.stt@gmail.com</p>
+    <p style="font-size:11px; line-height:1.5; margin:0; color:#333;">A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS, CHAROLI, PUNE-412105</p>
+    <p style="font-size:11px; margin:3px 0 0; color:#333;">Contact: 8291301603 &nbsp;|&nbsp; Email: pune.stt@gmail.com</p>
     <p style="font-size:11.5px; font-weight:bold; margin-top:3px; color:#222;">UAM MH19D0152647 / PAN BSNPP7564G</p>
   </div>
 
