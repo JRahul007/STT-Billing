@@ -5,7 +5,38 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import defaultStamp, { getDefaultStamp } from "../defaultStamp";
 
-const defaultLocations = ["BOM-PUNE", "PUNE-BOM", "BOM-GOA", "GOA-BOM", "IDR-BOM", "BOM-IDR"];
+const defaultLocations = [
+  { route: "BOM-PUNE", rate_per_kg: "" },
+  { route: "PUNE-BOM", rate_per_kg: "" },
+  { route: "BOM-GOA", rate_per_kg: "" },
+  { route: "GOA-BOM", rate_per_kg: "" },
+  { route: "IDR-BOM", rate_per_kg: "" },
+  { route: "BOM-IDR", rate_per_kg: "" },
+];
+
+function normalizeLocationEntry(entry) {
+  if (!entry) return null;
+  if (typeof entry === "string") {
+    const route = entry.trim().toUpperCase();
+    return route ? { route, rate_per_kg: "" } : null;
+  }
+  const route = (entry.route || entry.location || "").trim().toUpperCase();
+  if (!route) return null;
+  const rate = entry.rate_per_kg ?? entry.ratePerKg ?? entry.rate ?? "";
+  return { route, rate_per_kg: rate === "" ? "" : String(rate) };
+}
+
+function normalizeLocations(entries) {
+  const seen = new Set();
+  const normalized = [];
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const item = normalizeLocationEntry(entry);
+    if (!item || seen.has(item.route)) return;
+    seen.add(item.route);
+    normalized.push(item);
+  });
+  return normalized;
+}
 
 const numberToWords = (num) => {
   if (num === 0) return "Zero";
@@ -33,7 +64,7 @@ export default function InvoiceCreate() {
   const autoDownload = searchParams.get("autodownload");
   const [locations, setLocations] = useState(() => {
     const saved = localStorage.getItem("billing_locations");
-    return saved ? JSON.parse(saved) : [...defaultLocations];
+    return saved ? normalizeLocations(JSON.parse(saved)) : [...defaultLocations];
   });
   const [newLocation, setNewLocation] = useState("");
   const barcodeRef = useRef(null);
@@ -184,7 +215,14 @@ export default function InvoiceCreate() {
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     return `${dd}-${mm}-${d.getFullYear()}`;
   };
+  const normalizedServiceDesc = (inv.service_desc || "").trim();
   const routeDisplay = inv.route ? inv.route.replace("-", " to ") : "";
+  const [routeStart = "", routeEnd = ""] = routeDisplay.split(/\s+to\s+/i);
+  const servicePdfLine1 = [normalizedServiceDesc, routeStart].filter(Boolean).join(" ").trim();
+  const servicePdfLine2 = [
+    routeEnd ? `to ${routeEnd}` : "",
+    (inv.service_suffix || "").trim(),
+  ].filter(Boolean).join(" ").trim();
   const dateObj = inv.date ? new Date(inv.date + "T00:00:00") : null;
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const dateStr = dateObj
@@ -238,8 +276,8 @@ export default function InvoiceCreate() {
 
   const addRoute = () => {
     const val = newLocation.trim().toUpperCase();
-    if (val && !locations.includes(val)) {
-      const updated = [...locations, val];
+    if (val && !locations.some((loc) => loc.route === val)) {
+      const updated = [...locations, { route: val, rate_per_kg: "" }];
       setLocations(updated);
       localStorage.setItem("billing_locations", JSON.stringify(updated));
       setInv({ ...inv, route: val });
@@ -306,14 +344,30 @@ export default function InvoiceCreate() {
     const el = invoiceRef.current;
     if (!el) return;
 
+    const serviceCell = el.querySelector(".service-description-cell");
+    let servicePdfPreview = null;
+    let serviceEditable = null;
+    if (serviceCell) {
+      serviceEditable = serviceCell.querySelector(".service-editable");
+      servicePdfPreview = document.createElement("div");
+      servicePdfPreview.style.cssText = "font-weight:bold; font-size:13px; line-height:1.45; white-space:pre-wrap;";
+      servicePdfPreview.innerHTML = `${servicePdfLine1 || "&nbsp;"}<br/>${servicePdfLine2 || "&nbsp;"}`;
+      if (serviceEditable) serviceEditable.style.display = "none";
+      serviceCell.appendChild(servicePdfPreview);
+    }
+
     // Replace inputs/textareas/selects with plain text spans for clean PDF capture
     const replacements = [];
     el.querySelectorAll("input.edt, textarea.edt-area, textarea.edt, select.edt-select").forEach((field) => {
       const span = document.createElement("span");
       const computed = window.getComputedStyle(field);
-      span.textContent = field.tagName === "SELECT"
-        ? (field.options[field.selectedIndex]?.text || "")
-        : field.value;
+      if (field.tagName === "SELECT") {
+        span.textContent = field.options[field.selectedIndex]?.text || "";
+      } else if (field.tagName === "INPUT" && field.type === "date") {
+        span.textContent = fmtDMY(field.value);
+      } else {
+        span.textContent = field.value;
+      }
       const isFullWidth = computed.width === field.parentNode.clientWidth + "px" ||
         field.style.width === "100%";
       span.style.cssText = `
@@ -341,6 +395,8 @@ export default function InvoiceCreate() {
       field.style.display = "";
       span.remove();
     });
+    if (servicePdfPreview) servicePdfPreview.remove();
+    if (serviceEditable) serviceEditable.style.display = "";
 
     const imgData = canvas.toDataURL("image/png");
     const pdf = new jsPDF("p", "mm", "a4");
@@ -388,6 +444,13 @@ export default function InvoiceCreate() {
           background: transparent; border: none; border-bottom: 1px dashed #999;
           outline: none; font-family: 'Courier New', Courier, monospace;
           font-weight: bold; font-size: 13px; padding: 2px 0; cursor: pointer;
+        }
+        .monthly-range {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          font-size: 13px;
         }
       `}</style>
 
@@ -762,21 +825,15 @@ export default function InvoiceCreate() {
                     Bill for Providing Services for The Month Of{" "}
                     <span style={{ color: "#b71c1c" }}>{monthlyLabel || "—"}</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}>
+                  <div className="monthly-range">
                     <strong>From</strong>
                     <input className="edt" type="date" style={{ ...edt, fontSize: 12, width: 150 }}
                       value={inv.monthly_from}
                       onChange={(e) => setInv({ ...inv, monthly_from: e.target.value })} />
-                    {inv.monthly_from && (
-                      <span style={{ fontWeight: "bold", color: "#b71c1c", fontSize: 12 }}>{fmtDMY(inv.monthly_from)}</span>
-                    )}
                     <strong style={{ marginLeft: 8 }}>To</strong>
                     <input className="edt" type="date" style={{ ...edt, fontSize: 12, width: 150 }}
                       value={inv.monthly_to}
                       onChange={(e) => setInv({ ...inv, monthly_to: e.target.value })} />
-                    {inv.monthly_to && (
-                      <span style={{ fontWeight: "bold", color: "#b71c1c", fontSize: 12 }}>{fmtDMY(inv.monthly_to)}</span>
-                    )}
                   </div>
                 </td>
                 <td style={{ textAlign: "center", verticalAlign: "middle" }}>
@@ -790,18 +847,26 @@ export default function InvoiceCreate() {
             ) : (
               <>
                 <tr>
-                  <td style={{ padding: "12px 10px", lineHeight: 1.8 }}>
-                    <strong>
-                      <input className="edt" style={{ ...edt, width: "100%", fontSize: 13, borderBottom: "none" }}
-                        value={inv.service_desc} onChange={(e) => setInv({ ...inv, service_desc: e.target.value })} />
-                      {" "}
-                      <select className="edt-select" value={inv.route} onChange={(e) => setInv({ ...inv, route: e.target.value })}>
-                        <option value="">--Route--</option>
-                        {locations.map((loc) => <option key={loc} value={loc}>{loc.replace("-", " to ")}</option>)}
-                      </select>
-                      {" "}
-                      <input className="edt" style={{ ...edt, width: 140, fontSize: 13, borderBottom: "none" }}
-                        value={inv.service_suffix} onChange={(e) => setInv({ ...inv, service_suffix: e.target.value })} />
+                  <td className="service-description-cell" style={{ padding: "12px 10px", lineHeight: 1.8 }}>
+                    <strong className="service-editable" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div>
+                        <input className="edt" style={{ ...edt, width: "100%", fontSize: 13, borderBottom: "none" }}
+                          value={inv.service_desc}
+                          onChange={(e) => setInv({ ...inv, service_desc: e.target.value })}
+                        />
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                        <select className="edt-select" value={inv.route} onChange={(e) => setInv({ ...inv, route: e.target.value })}>
+                          <option value="">--Route--</option>
+                          {locations.map((loc) => (
+                            <option key={loc.route} value={loc.route}>
+                              {loc.route.replace("-", " to ")}
+                            </option>
+                          ))}
+                        </select>
+                        <input className="edt" style={{ ...edt, width: 140, fontSize: 13, borderBottom: "none" }}
+                          value={inv.service_suffix} onChange={(e) => setInv({ ...inv, service_suffix: e.target.value })} />
+                      </div>
                     </strong>
                   </td>
                   <td></td><td></td><td></td><td></td><td></td>

@@ -92,7 +92,14 @@ function buildDefaultBillingForm(consigners = [], consignees = []) {
   };
 }
 
-const defaultLocations = ["BOM-PUNE", "PUNE-BOM", "BOM-GOA", "GOA-BOM", "IDR-BOM", "BOM-IDR"];
+const defaultLocations = [
+  { route: "BOM-PUNE", rate_per_kg: "" },
+  { route: "PUNE-BOM", rate_per_kg: "" },
+  { route: "BOM-GOA", rate_per_kg: "" },
+  { route: "GOA-BOM", rate_per_kg: "" },
+  { route: "IDR-BOM", rate_per_kg: "" },
+  { route: "BOM-IDR", rate_per_kg: "" },
+];
 
 const INVOICE_PREFIX = "STT-";
 
@@ -150,6 +157,34 @@ function findPartyIndex(list, target) {
   );
 }
 
+function normalizeLocationEntry(entry) {
+  if (!entry) return null;
+  if (typeof entry === "string") {
+    const route = entry.trim().toUpperCase();
+    return route ? { route, rate_per_kg: "" } : null;
+  }
+  const route = (entry.route || entry.location || "").trim().toUpperCase();
+  if (!route) return null;
+  const rate = entry.rate_per_kg ?? entry.ratePerKg ?? entry.rate ?? "";
+  return { route, rate_per_kg: rate === "" ? "" : String(rate) };
+}
+
+function normalizeLocations(entries) {
+  const seen = new Set();
+  const normalized = [];
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const item = normalizeLocationEntry(entry);
+    if (!item || seen.has(item.route)) return;
+    seen.add(item.route);
+    normalized.push(item);
+  });
+  return normalized;
+}
+
+function saveLocationsToStorage(entries) {
+  localStorage.setItem("billing_locations", JSON.stringify(entries));
+}
+
 export default function Billing() {
   const navigate = useNavigate();
   const [billings, setBillings] = useState(() => {
@@ -160,9 +195,11 @@ export default function Billing() {
   const [form, setForm] = useState(() => buildDefaultBillingForm([DEFAULT_CONSIGNER], [DEFAULT_CONSIGNEE]));
   const [locations, setLocations] = useState(() => {
     const saved = localStorage.getItem("billing_locations");
-    return saved ? JSON.parse(saved) : [...defaultLocations];
+    return saved ? normalizeLocations(JSON.parse(saved)) : [...defaultLocations];
   });
-  const [newLocation, setNewLocation] = useState("");
+  const [locationForm, setLocationForm] = useState({ route: "", rate_per_kg: "" });
+  const [locationEditingRoute, setLocationEditingRoute] = useState(null);
+  const [showLocationManager, setShowLocationManager] = useState(false);
   const [pickupRoster, setPickupRoster] = useState(() => {
     const saved = localStorage.getItem("pickup_roster");
     return saved ? JSON.parse(saved) : ["Ankit Yadav", "Dhiraj Maske", "Tirath Mali"];
@@ -245,6 +282,18 @@ export default function Billing() {
   }, [filteredBillings]);
 
   const selectedCols = ALL_COLUMNS.filter((c) => exportColumns[c.key]);
+  const selectedLocationConfig = useMemo(
+    () => locations.find((loc) => loc.route === form.location_route) || null,
+    [locations, form.location_route]
+  );
+  const computedFreightAmount = useMemo(() => {
+    const weight = Number(form.weight);
+    const rate = Number(selectedLocationConfig?.rate_per_kg);
+    if (!form.location_route || !Number.isFinite(weight) || weight <= 0 || !Number.isFinite(rate) || rate <= 0) {
+      return "";
+    }
+    return String(Math.round(weight * rate));
+  }, [form.location_route, form.weight, selectedLocationConfig]);
 
   const getFilterLabel = () => {
     let label = "Billing Data";
@@ -474,15 +523,65 @@ export default function Billing() {
     URL.revokeObjectURL(url);
   };
 
-  const addLocation = () => {
-    const val = newLocation.trim().toUpperCase();
-    if (val && !locations.includes(val)) {
-      const updated = [...locations, val];
-      setLocations(updated);
-      localStorage.setItem("billing_locations", JSON.stringify(updated));
-      setForm({ ...form, location: val });
-      setNewLocation("");
+  const resetLocationManager = () => {
+    setLocationForm({ route: "", rate_per_kg: "" });
+    setLocationEditingRoute(null);
+  };
+
+  const openLocationManager = () => {
+    setShowLocationManager((prev) => !prev);
+    if (showLocationManager) resetLocationManager();
+  };
+
+  const handleSaveLocation = () => {
+    const route = locationForm.route.trim().toUpperCase();
+    const ratePerKg = locationForm.rate_per_kg.trim();
+    if (!route) {
+      alert("Location route is required.");
+      return;
     }
+
+    const duplicate = locations.some(
+      (loc) => loc.route === route && loc.route !== locationEditingRoute
+    );
+    if (duplicate) {
+      alert("This location already exists.");
+      return;
+    }
+
+    const nextEntry = { route, rate_per_kg: ratePerKg };
+    const updated = locationEditingRoute
+      ? locations.map((loc) => (loc.route === locationEditingRoute ? nextEntry : loc))
+      : [...locations, nextEntry];
+
+    setLocations(updated);
+    saveLocationsToStorage(updated);
+    setForm((prev) => ({
+      ...prev,
+      location_route: prev.location_route === locationEditingRoute || (!locationEditingRoute && !prev.location_route)
+        ? route
+        : prev.location_route,
+    }));
+    resetLocationManager();
+  };
+
+  const handleEditLocation = (route) => {
+    const current = locations.find((loc) => loc.route === route);
+    if (!current) return;
+    setLocationEditingRoute(route);
+    setLocationForm({ route: current.route, rate_per_kg: current.rate_per_kg || "" });
+    setShowLocationManager(true);
+  };
+
+  const handleDeleteLocation = (route) => {
+    if (!window.confirm(`Delete location "${route}"?`)) return;
+    const updated = locations.filter((loc) => loc.route !== route);
+    setLocations(updated);
+    saveLocationsToStorage(updated);
+    if (form.location_route === route) {
+      setForm((prev) => ({ ...prev, location_route: "", total_amount: "" }));
+    }
+    if (locationEditingRoute === route) resetLocationManager();
   };
 
   const getCurrentPartyList = () => (partyType === "consigner" ? consigners : consignees);
@@ -672,6 +771,13 @@ export default function Billing() {
     loadParties();
   }, []);
 
+  useEffect(() => {
+    if (computedFreightAmount === "") return;
+    setForm((prev) => (prev.total_amount === computedFreightAmount
+      ? prev
+      : { ...prev, total_amount: computedFreightAmount }));
+  }, [computedFreightAmount]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const location = form.location_route
@@ -727,7 +833,7 @@ export default function Billing() {
     if (!loc) return { route: "", client: "" };
     const match = loc.match(/^([A-Z]+-[A-Z]+)\((.+)\)$/);
     if (match) return { route: match[1], client: match[2] };
-    if (locations.includes(loc)) return { route: loc, client: "" };
+    if (locations.some((entry) => entry.route === loc)) return { route: loc, client: "" };
     return { route: "", client: "" };
   };
 
@@ -1474,7 +1580,9 @@ export default function Billing() {
                   >
                     <option value="">-- Select Route --</option>
                     {locations.map((loc) => (
-                      <option key={loc} value={loc}>{loc}</option>
+                      <option key={loc.route} value={loc.route}>
+                        {loc.route}{loc.rate_per_kg ? ` (₹${loc.rate_per_kg}/kg)` : ""}
+                      </option>
                     ))}
                   </select>
                   <input
@@ -1484,16 +1592,83 @@ export default function Billing() {
                     onChange={(e) => setForm({ ...form, location_client: e.target.value })}
                   />
                 </div>
-                <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                  <input
-                    style={{ flex: 1 }}
-                    placeholder="Add new route e.g. NGP-BOM"
-                    value={newLocation}
-                    onChange={(e) => setNewLocation(e.target.value.toUpperCase())}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addLocation(); } }}
-                  />
-                  <button type="button" className="btn btn-primary btn-sm" onClick={addLocation}>Add</button>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={openLocationManager}>
+                    {showLocationManager ? "Close Manage Location" : "Manage Location"}
+                  </button>
+                  {selectedLocationConfig?.rate_per_kg && (
+                    <div style={{ fontSize: 13, color: "#4361ee", fontWeight: 600 }}>
+                      Rate: ₹{Number(selectedLocationConfig.rate_per_kg).toLocaleString("en-IN")}/kg
+                    </div>
+                  )}
                 </div>
+                {showLocationManager && (
+                  <div style={{ marginTop: 10, border: "1px solid #dbe3f3", borderRadius: 12, background: "#f8faff", padding: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr auto", gap: 8, alignItems: "end" }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Route</label>
+                        <input
+                          placeholder="e.g. PUNE-BOM"
+                          value={locationForm.route}
+                          onChange={(e) => setLocationForm((prev) => ({ ...prev, route: e.target.value.toUpperCase() }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Rate per KG</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          placeholder="40"
+                          value={locationForm.rate_per_kg}
+                          onChange={(e) => setLocationForm((prev) => ({ ...prev, rate_per_kg: e.target.value }))}
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button type="button" className="btn btn-primary btn-sm" onClick={handleSaveLocation}>
+                          {locationEditingRoute ? "Update" : "Add"}
+                        </button>
+                        {locationEditingRoute && (
+                          <button type="button" className="btn btn-sm btn-secondary" onClick={resetLocationManager}>
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                      {locations.length === 0 ? (
+                        <div style={{ fontSize: 13, color: "#64748b" }}>No locations added yet.</div>
+                      ) : (
+                        locations.map((loc) => (
+                          <div
+                            key={loc.route}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "10px 12px",
+                              borderRadius: 10,
+                              background: "#fff",
+                              border: "1px solid #e2e8f0",
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontWeight: 700, color: "#0f172a" }}>{loc.route}</div>
+                              <div style={{ fontSize: 12, color: "#64748b" }}>
+                                {loc.rate_per_kg ? `₹${Number(loc.rate_per_kg).toLocaleString("en-IN")} per kg` : "Rate not set"}
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button type="button" className="btn btn-sm btn-secondary" onClick={() => handleEditLocation(loc.route)}>Edit</button>
+                              <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteLocation(loc.route)}>Delete</button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
                 {form.location_route && (
                   <div style={{ marginTop: "6px", fontSize: "13px", color: "#555" }}>
                     Preview: <strong>{form.location_route}{form.location_client ? `(${form.location_client})` : ""}</strong>
@@ -1503,6 +1678,11 @@ export default function Billing() {
               <div className="form-group">
                 <label>Weight (kgs)</label>
                 <input type="number" step="1" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
+                {selectedLocationConfig?.rate_per_kg && form.weight && Number(form.weight) > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 13, color: "#475569" }}>
+                    Freight calculation: {Number(form.weight)} × ₹{Number(selectedLocationConfig.rate_per_kg).toLocaleString("en-IN")} = <strong>₹{(Number(form.weight) * Number(selectedLocationConfig.rate_per_kg)).toLocaleString("en-IN")}</strong>
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1569,6 +1749,11 @@ export default function Billing() {
               <div className="form-group">
                 <label>Freight Amount</label>
                 <input type="number" step="1" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
+                {computedFreightAmount && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#16a34a", fontWeight: 600 }}>
+                    Auto-filled from selected location rate and weight.
+                  </div>
+                )}
                 {(() => {
                   const freight = Math.round(Number(form.total_amount) || 0);
                   const extras = getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0);
