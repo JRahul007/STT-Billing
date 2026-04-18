@@ -62,6 +62,7 @@ export default function InvoiceCreate() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const autoDownload = searchParams.get("autodownload");
+  const invoiceDateInputRef = useRef(null);
   const [locations, setLocations] = useState(() => {
     const saved = localStorage.getItem("billing_locations");
     return saved ? normalizeLocations(JSON.parse(saved)) : [...defaultLocations];
@@ -217,6 +218,12 @@ export default function InvoiceCreate() {
   };
   const normalizedServiceDesc = (inv.service_desc || "").trim();
   const routeDisplay = inv.route ? inv.route.replace("-", " to ") : "";
+  const safeRouteFileName = (inv.route || "LOCATION")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .trim() || "LOCATION";
+  const safeClientFileName = (inv.consignee_name || inv.client_name || "CLIENT")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .trim() || "CLIENT";
   const [routeStart = "", routeEnd = ""] = routeDisplay.split(/\s+to\s+/i);
   const servicePdfLine1 = [normalizedServiceDesc, routeStart].filter(Boolean).join(" ").trim();
   const servicePdfLine2 = [
@@ -248,7 +255,7 @@ export default function InvoiceCreate() {
   /* Monthly mode: auto-set invoice_no as STT/MM/YY based on month being billed */
   useEffect(() => {
     if (!inv.is_monthly) return;
-    const src = inv.monthly_from || inv.date;
+    const src = inv.monthly_from || inv.monthly_to;
     if (!src) return;
     const d = new Date(src + "T00:00:00");
     if (isNaN(d.getTime())) return;
@@ -258,7 +265,7 @@ export default function InvoiceCreate() {
     if (inv.invoice_no !== expected) {
       setInv((prev) => ({ ...prev, invoice_no: expected }));
     }
-  }, [inv.is_monthly, inv.monthly_from, inv.date]);
+  }, [inv.is_monthly, inv.monthly_from, inv.monthly_to]);
 
   // Auto-download PDF when navigated from Billing with ?autodownload param
   const autoDownloadDone = useRef(false);
@@ -338,6 +345,17 @@ export default function InvoiceCreate() {
 
   const invoiceRef = useRef(null);
 
+  const openInvoiceDatePicker = () => {
+    const input = invoiceDateInputRef.current;
+    if (!input) return;
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+      return;
+    }
+    input.focus();
+    input.click();
+  };
+
   const downloadPDF = async () => {
     saveInvoiceNo(inv.invoice_no);
     saveInvoiceToList();
@@ -403,7 +421,10 @@ export default function InvoiceCreate() {
     const pdfW = pdf.internal.pageSize.getWidth();
     const pdfH = (canvas.height * pdfW) / canvas.width;
     pdf.addImage(imgData, "PNG", 0, 0, pdfW, pdfH);
-    pdf.save(`Invoice_${inv.invoice_no}_${dateStr || "draft"}.pdf`);
+    const fileName = inv.is_monthly
+      ? `${safeClientFileName}_${inv.invoice_no}.pdf`
+      : `${safeRouteFileName}_${inv.invoice_no}_${dateStr || "draft"}.pdf`;
+    pdf.save(fileName);
   };
 
   const edt = {
@@ -734,11 +755,32 @@ export default function InvoiceCreate() {
 
                 {/* Date */}
                 <td style={{ textAlign: "center", verticalAlign: "middle", padding: "4px 6px", position: "relative" }}>
-                  <input className="edt" type="date" style={{ ...edt, fontSize: 11, width: "100%", textAlign: "center" }}
-                    value={inv.date} onChange={(e) => setInv({ ...inv, date: e.target.value })} />
-                  {dateStr && (
-                    <div style={{ fontWeight: "bold", fontSize: 13, color: "#b71c1c", marginTop: 2 }}>{dateStr}</div>
-                  )}
+                  <button
+                    type="button"
+                    onClick={openInvoiceDatePicker}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      width: "100%",
+                      padding: 0,
+                      fontFamily: "'Courier New', Courier, monospace",
+                      fontWeight: "bold",
+                      fontSize: 13,
+                      color: dateStr ? "#b71c1c" : "#666",
+                    }}
+                  >
+                    {dateStr || "Select Date"}
+                  </button>
+                  <input
+                    ref={invoiceDateInputRef}
+                    type="date"
+                    value={inv.date}
+                    onChange={(e) => setInv({ ...inv, date: e.target.value })}
+                    style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 1, height: 1, inset: 0 }}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                  />
                 </td>
               </tr>
             ) : (
@@ -776,12 +818,32 @@ export default function InvoiceCreate() {
 
                 {/* Date */}
                 <td style={{ textAlign: "center", verticalAlign: "middle", padding: 10, position: "relative" }}>
-                  {dateStr
-                    ? <div style={{ fontWeight: "bold", fontSize: 15, color: "#222", cursor: "pointer" }}
-                        onClick={() => setInv({ ...inv, date: "" })}>{dateStr}</div>
-                    : <input className="edt" type="date" style={{ ...edt, fontSize: 12, width: "100%", textAlign: "center" }}
-                        value={inv.date} onChange={(e) => setInv({ ...inv, date: e.target.value })} />
-                  }
+                  <button
+                    type="button"
+                    onClick={openInvoiceDatePicker}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      width: "100%",
+                      padding: 0,
+                      fontFamily: "'Courier New', Courier, monospace",
+                      fontWeight: "bold",
+                      fontSize: 15,
+                      color: dateStr ? "#b71c1c" : "#666",
+                    }}
+                  >
+                    {dateStr || "Select Date"}
+                  </button>
+                  <input
+                    ref={invoiceDateInputRef}
+                    type="date"
+                    value={inv.date}
+                    onChange={(e) => setInv({ ...inv, date: e.target.value })}
+                    style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 1, height: 1, inset: 0 }}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                  />
                 </td>
               </tr>
             )}
