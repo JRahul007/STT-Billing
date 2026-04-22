@@ -63,6 +63,11 @@ const emptyForm = {
   show_packaging: false,
   box_rate: "150",
   boxes: "1",
+  packaging_mode: "box",
+  packaging_name: "",
+  packaging_amount: "",
+  packaging_entries: [],
+  packaging_edit_index: null,
   show_oda: false,
   oda_location: "Bhosri",
   oda_person: "Ankit P",
@@ -70,10 +75,14 @@ const emptyForm = {
   show_pickup: false,
   pickup_rate: "600",
   pickup_entries: [],
+  pickup_selected_name: "",
+  pickup_edit_index: null,
   pickup_new_name: "",
   show_other: false,
   other_desc: "",
   other_amount: "",
+  other_entries: [],
+  other_edit_index: null,
   showExtrasDropdown: false,
   payment_status: "NOTPAID",
 };
@@ -116,17 +125,111 @@ function getNextInvoiceNo(billings) {
 }
 
 // Extract extra charges as [{description, amount}] from a billing record
+function normalizePackagingEntries(b) {
+  if (Array.isArray(b?.packaging_entries) && b.packaging_entries.length > 0) {
+    return b.packaging_entries
+      .map((entry) => ({
+        kind: String(entry?.kind || (entry?.amount ? "ice_box" : "box")),
+        name: String(entry?.name || entry?.label || ""),
+        boxes: String(entry?.boxes ?? ""),
+        rate: String(entry?.rate ?? entry?.box_rate ?? ""),
+        amount: String(entry?.amount ?? ""),
+      }))
+      .filter((entry) => (
+        (entry.kind === "ice_box" && (entry.name.trim() || Number(entry.amount) > 0))
+        || (entry.kind !== "ice_box" && (Number(entry.boxes) > 0 || Number(entry.rate) > 0))
+      ));
+  }
+  if (b?.show_packaging) {
+    return [{
+      kind: "box",
+      name: "",
+      boxes: String(b?.boxes || "1"),
+      rate: String(b?.box_rate || "150"),
+      amount: "",
+    }];
+  }
+  return [];
+}
+
+function normalizePickupEntries(b) {
+  if (!Array.isArray(b?.pickup_entries)) return [];
+  return b.pickup_entries
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return { name: entry, rate: String(b?.pickup_rate || "600") };
+      }
+      return {
+        name: String(entry?.name || entry?.person || ""),
+        rate: String(entry?.rate ?? b?.pickup_rate ?? "600"),
+      };
+    })
+    .filter((entry) => entry.name.trim());
+}
+
+function normalizeOtherEntries(b) {
+  if (Array.isArray(b?.other_entries) && b.other_entries.length > 0) {
+    return b.other_entries
+      .map((entry) => ({
+        description: String(entry?.description || entry?.desc || ""),
+        amount: String(entry?.amount ?? ""),
+      }))
+      .filter((entry) => entry.description.trim() || Number(entry.amount) > 0);
+  }
+  if (b?.show_other && b?.other_desc) {
+    return [{
+      description: String(b.other_desc || ""),
+      amount: String(b.other_amount || ""),
+    }];
+  }
+  return [];
+}
+
+function getLegacyExtraFields(source) {
+  const packagingEntries = normalizePackagingEntries(source);
+  const pickupEntries = normalizePickupEntries(source);
+  const otherEntries = normalizeOtherEntries(source);
+  const firstPackaging = packagingEntries[0] || {};
+  const firstBoxPackaging = packagingEntries.find((entry) => entry.kind !== "ice_box") || {};
+  const firstPickup = pickupEntries[0] || {};
+  const firstOther = otherEntries[0] || {};
+
+  return {
+    boxes: firstBoxPackaging.boxes ? String(firstBoxPackaging.boxes || "1") : "1",
+    box_rate: firstBoxPackaging.rate ? String(firstBoxPackaging.rate || "150") : "150",
+    pickup_rate: pickupEntries.length > 0 ? String(firstPickup.rate || "600") : "600",
+    other_desc: otherEntries.length > 0 ? String(firstOther.description || "") : "",
+    other_amount: otherEntries.length > 0 ? String(firstOther.amount || "") : "",
+  };
+}
+
 function getExtraChargeItems(b) {
   const items = [];
-  const bxs = Number(b.boxes) || 1;
-  const bxRate = Number(b.box_rate) || 150;
-  if (b.show_packaging) items.push({ description: `Box & Pkging (${bxs}-Box)`, amount: bxs * bxRate });
-  if (b.show_oda) items.push({ description: `${b.oda_person || ""} (ODA-Pickup)`, amount: Number(b.oda_amount) || 0 });
-  if (b.show_pickup && b.pickup_entries) {
-    const pRate = Number(b.pickup_rate) || 600;
-    b.pickup_entries.forEach((name) => items.push({ description: `Pickup (${name})`, amount: pRate }));
+  if (b.show_packaging) {
+    normalizePackagingEntries(b).forEach((entry) => {
+      if (entry.kind === "ice_box") {
+        items.push({
+          description: `Box & Packaging (Ice-Box${entry.name ? ` - ${entry.name}` : ""})`,
+          amount: Number(entry.amount) || 0,
+        });
+      } else {
+        const boxes = Number(entry.boxes) || 0;
+        const rate = Number(entry.rate) || 0;
+        items.push({ description: `Box & Pkging (${boxes}-Box)`, amount: boxes * rate });
+      }
+    });
   }
-  if (b.show_other && b.other_desc) items.push({ description: b.other_desc, amount: Number(b.other_amount) || 0 });
+  if (b.show_oda) items.push({ description: `${b.oda_person || ""} (ODA-Pickup)`, amount: Number(b.oda_amount) || 0 });
+  if (b.show_pickup) {
+    normalizePickupEntries(b).forEach((entry) => {
+      items.push({ description: `Pickup (${entry.name})`, amount: Number(entry.rate) || 0 });
+    });
+  }
+  if (b.show_other) {
+    normalizeOtherEntries(b).forEach((entry) => {
+      items.push({ description: entry.description || "Other", amount: Number(entry.amount) || 0 });
+    });
+  }
   // Support legacy extra_charges_list format
   if (b.extra_charges_list) b.extra_charges_list.forEach((ec) => {
     if (Number(ec.amount) > 0) items.push({ description: ec.description || "Other", amount: Number(ec.amount) });
@@ -186,6 +289,7 @@ function saveLocationsToStorage(entries) {
 }
 
 export default function Billing() {
+  const RECORDS_PER_PAGE = 10;
   const navigate = useNavigate();
   const [billings, setBillings] = useState(() => {
     return JSON.parse(localStorage.getItem("invoices") || "[]");
@@ -214,6 +318,7 @@ export default function Billing() {
   const [filterYear, setFilterYear] = useState(new Date().getFullYear().toString());
   const [filterLocation, setFilterLocation] = useState("");
   const [filterClient, setFilterClient] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [showExportPanel, setShowExportPanel] = useState(false);
 
   const ALL_COLUMNS = [
@@ -280,6 +385,24 @@ export default function Billing() {
       { total: 0, bom: 0, other: 0, extra: 0 }
     );
   }, [filteredBillings]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredBillings.length / RECORDS_PER_PAGE));
+  const paginatedBillings = useMemo(() => {
+    const start = (currentPage - 1) * RECORDS_PER_PAGE;
+    return filteredBillings.slice(start, start + RECORDS_PER_PAGE);
+  }, [filteredBillings, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterMonth, filterYear, filterLocation, filterClient]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const pageNumbers = useMemo(() => Array.from({ length: totalPages }, (_, i) => i + 1), [totalPages]);
 
   const selectedCols = ALL_COLUMNS.filter((c) => exportColumns[c.key]);
   const selectedLocationConfig = useMemo(
@@ -778,6 +901,75 @@ export default function Billing() {
       : { ...prev, total_amount: computedFreightAmount }));
   }, [computedFreightAmount]);
 
+  const upsertPackagingEntry = () => {
+    const nextEntry = form.packaging_mode === "ice_box"
+      ? {
+        kind: "ice_box",
+        name: form.packaging_name.trim(),
+        boxes: "",
+        rate: "",
+        amount: String(form.packaging_amount || "").trim(),
+      }
+      : {
+        kind: "box",
+        name: "",
+        boxes: String(form.boxes || "").trim(),
+        rate: String(form.box_rate || "").trim(),
+        amount: "",
+      };
+    if (
+      (nextEntry.kind === "ice_box" && (!nextEntry.name || !nextEntry.amount))
+      || (nextEntry.kind === "box" && (!nextEntry.boxes || !nextEntry.rate))
+    ) return;
+    const nextEntries = [...form.packaging_entries];
+    if (form.packaging_edit_index !== null) nextEntries[form.packaging_edit_index] = nextEntry;
+    else nextEntries.push(nextEntry);
+    setForm({
+      ...form,
+      packaging_entries: nextEntries,
+      packaging_mode: "box",
+      packaging_name: "",
+      packaging_amount: "",
+      boxes: "1",
+      box_rate: "150",
+      packaging_edit_index: null,
+    });
+  };
+
+  const upsertPickupEntry = () => {
+    const name = form.pickup_selected_name.trim();
+    const rate = String(form.pickup_rate || "").trim();
+    if (!name || !rate) return;
+    const nextEntry = { name, rate };
+    const nextEntries = [...form.pickup_entries];
+    if (form.pickup_edit_index !== null) nextEntries[form.pickup_edit_index] = nextEntry;
+    else nextEntries.push(nextEntry);
+    setForm({
+      ...form,
+      pickup_entries: nextEntries,
+      pickup_selected_name: "",
+      pickup_rate: "600",
+      pickup_edit_index: null,
+    });
+  };
+
+  const upsertOtherEntry = () => {
+    const description = form.other_desc.trim();
+    const amount = String(form.other_amount || "").trim();
+    if (!description || !amount) return;
+    const nextEntry = { description, amount };
+    const nextEntries = [...form.other_entries];
+    if (form.other_edit_index !== null) nextEntries[form.other_edit_index] = nextEntry;
+    else nextEntries.push(nextEntry);
+    setForm({
+      ...form,
+      other_entries: nextEntries,
+      other_desc: "",
+      other_amount: "",
+      other_edit_index: null,
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const location = form.location_route
@@ -787,11 +979,23 @@ export default function Billing() {
     const freight = Math.round(Number(form.total_amount) || 0);
     const extrasTotal = getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0);
     const grandTotal = freight + extrasTotal;
-    const submitData = { ...form, location, total_amount: grandTotal };
+    const submitData = {
+      ...form,
+      ...getLegacyExtraFields(form),
+      location,
+      total_amount: grandTotal,
+    };
     delete submitData.location_route;
     delete submitData.location_client;
     delete submitData.showExtrasDropdown;
+    delete submitData.packaging_mode;
+    delete submitData.packaging_name;
+    delete submitData.packaging_amount;
+    delete submitData.packaging_edit_index;
+    delete submitData.pickup_selected_name;
+    delete submitData.pickup_edit_index;
     delete submitData.pickup_new_name;
+    delete submitData.other_edit_index;
 
     if (editing) {
       // If record has a numeric DB id, try API update; otherwise update localStorage
@@ -854,6 +1058,14 @@ export default function Billing() {
     const extrasTotal = getExtraChargeItems(b).reduce((s, ec) => s + ec.amount, 0);
     const totalRounded = Math.round(Number(b.total_amount) || 0);
     const freightAmount = totalRounded - extrasTotal;
+    const packagingEntries = normalizePackagingEntries(b);
+    const pickupEntries = normalizePickupEntries(b);
+    const otherEntries = normalizeOtherEntries(b);
+    const legacyFields = getLegacyExtraFields({
+      packaging_entries: packagingEntries,
+      pickup_entries: pickupEntries,
+      other_entries: otherEntries,
+    });
     setForm({
       invoice_no: b.invoice_no,
       date: b.date ? b.date.split("T")[0] : "",
@@ -873,19 +1085,28 @@ export default function Billing() {
       other_expense: b.other_expense || "",
       other_exp_description: b.other_exp_description || "",
       show_packaging: b.show_packaging || false,
-      box_rate: b.box_rate || "150",
-      boxes: b.boxes || "1",
+      box_rate: legacyFields.box_rate,
+      boxes: legacyFields.boxes,
+      packaging_mode: "box",
+      packaging_name: "",
+      packaging_amount: "",
+      packaging_entries: packagingEntries,
+      packaging_edit_index: null,
       show_oda: b.show_oda || false,
       oda_location: b.oda_location || "Bhosri",
       oda_person: b.oda_person || "Ankit P",
       oda_amount: b.oda_amount || "600",
       show_pickup: b.show_pickup || false,
-      pickup_rate: b.pickup_rate || "600",
-      pickup_entries: b.pickup_entries || [],
+      pickup_rate: legacyFields.pickup_rate,
+      pickup_entries: pickupEntries,
+      pickup_selected_name: "",
+      pickup_edit_index: null,
       pickup_new_name: "",
       show_other: b.show_other || false,
-      other_desc: b.other_desc || "",
-      other_amount: b.other_amount || "",
+      other_desc: legacyFields.other_desc,
+      other_amount: legacyFields.other_amount,
+      other_entries: otherEntries,
+      other_edit_index: null,
       showExtrasDropdown: false,
       payment_status: b.payment_status || "NOTPAID",
     });
@@ -1313,17 +1534,19 @@ export default function Billing() {
       contain: "water\nsample",
       rate_per_kg: String(ratePerKg),
       box_rate: String(b.box_rate || "150"),
+      packaging_entries: normalizePackagingEntries(b),
       show_packaging: b.show_packaging || false,
       show_oda: b.show_oda || false,
       oda_location: b.oda_location || "Bhosri",
       oda_person: b.oda_person || "Ankit P",
       oda_amount: String(b.oda_amount || "600"),
       show_pickup: b.show_pickup || false,
-      pickup_entries: b.pickup_entries || [],
+      pickup_entries: normalizePickupEntries(b),
       pickup_rate: String(b.pickup_rate || "600"),
       show_other: b.show_other || false,
       other_desc: b.other_desc || "",
       other_amount: String(b.other_amount || ""),
+      other_entries: normalizeOtherEntries(b),
     };
 
     localStorage.setItem("open_invoice", JSON.stringify(invoiceData));
@@ -1495,7 +1718,7 @@ export default function Billing() {
                 </td>
               </tr>
             ) : (
-              filteredBillings.map((b) => (
+              paginatedBillings.map((b) => (
                 <tr key={b.id}>
                   <td><strong style={{ color: "#4361ee", cursor: "pointer", textDecoration: "underline" }}
                     onClick={() => {
@@ -1544,6 +1767,46 @@ export default function Billing() {
           </tbody>
         </table>
       </div>
+      {filteredBillings.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            style={{ minWidth: 84, opacity: currentPage === 1 ? 0.6 : 1 }}
+          >
+            Previous
+          </button>
+          {pageNumbers.map((page) => (
+            <button
+              key={page}
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setCurrentPage(page)}
+              style={{
+                minWidth: 38,
+                background: currentPage === page ? "#4361ee" : "#fff",
+                color: currentPage === page ? "#fff" : "#111",
+                border: "1px solid #d1d5db",
+                borderRadius: 8,
+                fontWeight: currentPage === page ? 700 : 500,
+              }}
+            >
+              {page}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={currentPage === totalPages}
+            onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+            style={{ minWidth: 84, opacity: currentPage === totalPages ? 0.6 : 1 }}
+          >
+            Next
+          </button>
+        </div>
+      )}
 
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
@@ -1808,21 +2071,114 @@ export default function Billing() {
                       </div>
                       {form.show_packaging && (
                         <div>
-                          <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                            <div style={{ flex: 1 }}>
-                              <label style={{ fontSize: 11, color: "#555" }}>Boxes</label>
-                              <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                                value={form.boxes} onChange={(e) => setForm({ ...form, boxes: e.target.value })} />
+                          <div style={{ marginBottom: 8 }}>
+                            <label style={{ fontSize: 11, color: "#555" }}>Packaging Type</label>
+                            <select
+                              style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
+                              value={form.packaging_mode}
+                              onChange={(e) => setForm({ ...form, packaging_mode: e.target.value })}
+                            >
+                              <option value="box">Box & Packaging</option>
+                              <option value="ice_box">Box & Packaging (Ice-Box)</option>
+                            </select>
+                          </div>
+                          {form.packaging_mode === "ice_box" ? (
+                            <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                              <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: 11, color: "#555" }}>Name / Type</label>
+                                <input style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
+                                  placeholder="Ice-Box - Small"
+                                  value={form.packaging_name}
+                                  onChange={(e) => setForm({ ...form, packaging_name: e.target.value })} />
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: 11, color: "#555" }}>Amount (₹)</label>
+                                <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
+                                  value={form.packaging_amount} onChange={(e) => setForm({ ...form, packaging_amount: e.target.value })} />
+                              </div>
                             </div>
-                            <div style={{ flex: 1 }}>
-                              <label style={{ fontSize: 11, color: "#555" }}>Rate per Box (₹)</label>
-                              <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                                value={form.box_rate} onChange={(e) => setForm({ ...form, box_rate: e.target.value })} />
+                          ) : (
+                            <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                              <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: 11, color: "#555" }}>Boxes</label>
+                                <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
+                                  value={form.boxes} onChange={(e) => setForm({ ...form, boxes: e.target.value })} />
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <label style={{ fontSize: 11, color: "#555" }}>Rate per Box (₹)</label>
+                                <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
+                                  value={form.box_rate} onChange={(e) => setForm({ ...form, box_rate: e.target.value })} />
+                              </div>
                             </div>
+                          )}
+                          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
+                              onClick={upsertPackagingEntry}
+                            >
+                              {form.packaging_edit_index !== null ? "Update Entry" : "Add Entry"}
+                            </button>
                           </div>
                           <div style={{ fontSize: 12, color: "#555" }}>
-                            {Number(form.boxes) || 0} box × ₹{Number(form.box_rate) || 0} = <strong>₹{(Number(form.boxes) || 0) * (Number(form.box_rate) || 0)}</strong>
+                            {form.packaging_mode === "ice_box"
+                              ? <span>{form.packaging_name || "Ice-Box"} = <strong>₹{Number(form.packaging_amount) || 0}</strong></span>
+                              : <span>{Number(form.boxes) || 0} box × ₹{Number(form.box_rate) || 0} = <strong>₹{(Number(form.boxes) || 0) * (Number(form.box_rate) || 0)}</strong></span>}
                           </div>
+                          {form.packaging_entries.length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                              <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({form.packaging_entries.length})</label>
+                              {form.packaging_entries.map((entry, i) => {
+                                const amount = entry.kind === "ice_box"
+                                  ? (Number(entry.amount) || 0)
+                                  : (Number(entry.boxes) || 0) * (Number(entry.rate) || 0);
+                                return (
+                                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", fontSize: 12, gap: 8 }}>
+                                    <span>{entry.kind === "ice_box" ? `Box & Packaging (Ice-Box${entry.name ? ` - ${entry.name}` : ""})` : `${entry.boxes} box × ₹${entry.rate}`}</span>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                      <span style={{ color: "#555" }}>₹{amount}</span>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm"
+                                        style={{ background: "#f3f4f6", color: "#111", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                        onClick={() => setForm({
+                                          ...form,
+                                          packaging_mode: entry.kind || "box",
+                                          packaging_name: String(entry.name || ""),
+                                          packaging_amount: String(entry.amount || ""),
+                                          boxes: String(entry.boxes || "1"),
+                                          box_rate: String(entry.rate || "150"),
+                                          packaging_edit_index: i,
+                                        })}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm"
+                                        style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                        onClick={() => setForm({
+                                          ...form,
+                                          packaging_entries: form.packaging_entries.filter((_, idx) => idx !== i),
+                                          packaging_edit_index: form.packaging_edit_index === i ? null : form.packaging_edit_index,
+                                        })}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              <div style={{ borderTop: "1px solid #eee", marginTop: 4, paddingTop: 4, fontSize: 12, fontWeight: "bold" }}>
+                                Total: ₹{form.packaging_entries.reduce((sum, entry) => sum + (
+                                  entry.kind === "ice_box"
+                                    ? (Number(entry.amount) || 0)
+                                    : ((Number(entry.boxes) || 0) * (Number(entry.rate) || 0))
+                                ), 0)}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1876,12 +2232,21 @@ export default function Billing() {
                           <div style={{ marginBottom: 8 }}>
                             <label style={{ fontSize: 11, color: "#555" }}>Select Person</label>
                             <select style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value="" onChange={(e) => {
-                                if (e.target.value) setForm({ ...form, pickup_entries: [...form.pickup_entries, e.target.value] });
-                              }}>
+                              value={form.pickup_selected_name}
+                              onChange={(e) => setForm({ ...form, pickup_selected_name: e.target.value })}>
                               <option value="">-- Select name to add --</option>
                               {pickupRoster.map((name, i) => <option key={i} value={name}>{name}</option>)}
                             </select>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
+                              onClick={upsertPickupEntry}
+                            >
+                              {form.pickup_edit_index !== null ? "Update Entry" : "Add Entry"}
+                            </button>
                           </div>
                           <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
                             <input style={{ flex: 1, padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}
@@ -1910,18 +2275,41 @@ export default function Billing() {
                           {form.pickup_entries.length > 0 && (
                             <div style={{ marginBottom: 4 }}>
                               <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({form.pickup_entries.length})</label>
-                              {form.pickup_entries.map((name, i) => (
+                              {form.pickup_entries.map((entry, i) => (
                                 <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12 }}>
-                                  <span>Pickup Charges (<strong>{name}</strong>)</span>
+                                  <span>Pickup Charges (<strong>{entry.name}</strong>)</span>
                                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ color: "#555" }}>₹{Number(form.pickup_rate) || 0}</span>
-                                    <span style={{ cursor: "pointer", color: "#e63946", fontWeight: "bold", fontSize: 14 }}
-                                      onClick={() => setForm({ ...form, pickup_entries: form.pickup_entries.filter((_, idx) => idx !== i) })}>×</span>
+                                    <span style={{ color: "#555" }}>₹{Number(entry.rate) || 0}</span>
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      style={{ background: "#f3f4f6", color: "#111", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                      onClick={() => setForm({
+                                        ...form,
+                                        pickup_selected_name: entry.name,
+                                        pickup_rate: String(entry.rate || "600"),
+                                        pickup_edit_index: i,
+                                      })}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                      onClick={() => setForm({
+                                        ...form,
+                                        pickup_entries: form.pickup_entries.filter((_, idx) => idx !== i),
+                                        pickup_edit_index: form.pickup_edit_index === i ? null : form.pickup_edit_index,
+                                      })}
+                                    >
+                                      Delete
+                                    </button>
                                   </div>
                                 </div>
                               ))}
                               <div style={{ borderTop: "1px solid #eee", marginTop: 4, paddingTop: 4, fontSize: 12, fontWeight: "bold" }}>
-                                Total: ₹{form.pickup_entries.length * (Number(form.pickup_rate) || 0)}
+                                Total: ₹{form.pickup_entries.reduce((sum, entry) => sum + (Number(entry.rate) || 0), 0)}
                               </div>
                             </div>
                           )}
@@ -1951,6 +2339,57 @@ export default function Billing() {
                             <input type="number" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
                               value={form.other_amount} onChange={(e) => setForm({ ...form, other_amount: e.target.value })} />
                           </div>
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
+                              onClick={upsertOtherEntry}
+                            >
+                              {form.other_edit_index !== null ? "Update Entry" : "Add Entry"}
+                            </button>
+                          </div>
+                          {form.other_entries.length > 0 && (
+                            <div style={{ marginBottom: 4 }}>
+                              <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({form.other_entries.length})</label>
+                              {form.other_entries.map((entry, i) => (
+                                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12, gap: 8 }}>
+                                  <span>{entry.description}</span>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ color: "#555" }}>₹{Number(entry.amount) || 0}</span>
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      style={{ background: "#f3f4f6", color: "#111", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                      onClick={() => setForm({
+                                        ...form,
+                                        other_desc: entry.description,
+                                        other_amount: String(entry.amount || ""),
+                                        other_edit_index: i,
+                                      })}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                      onClick={() => setForm({
+                                        ...form,
+                                        other_entries: form.other_entries.filter((_, idx) => idx !== i),
+                                        other_edit_index: form.other_edit_index === i ? null : form.other_edit_index,
+                                      })}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                              <div style={{ borderTop: "1px solid #eee", marginTop: 4, paddingTop: 4, fontSize: 12, fontWeight: "bold" }}>
+                                Total: ₹{form.other_entries.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1965,10 +2404,16 @@ export default function Billing() {
                 {/* Summary of enabled extras */}
                 {(form.show_packaging || form.show_oda || form.show_pickup || form.show_other) && (
                   <div style={{ marginTop: 8, fontSize: 12, color: "#555", lineHeight: 1.8 }}>
-                    {form.show_packaging && <div>Box & Packaging: <strong>₹{(Number(form.boxes) || 0) * (Number(form.box_rate) || 0)}</strong></div>}
+                    {form.show_packaging && form.packaging_entries.map((entry, i) => (
+                      <div key={`packaging-${i}`}>
+                        {entry.kind === "ice_box"
+                          ? <>Box & Packaging (Ice-Box{entry.name ? ` - ${entry.name}` : ""}): <strong>₹{(Number(entry.amount) || 0).toLocaleString()}</strong></>
+                          : <>Box & Packaging ({entry.boxes} box): <strong>₹{((Number(entry.boxes) || 0) * (Number(entry.rate) || 0)).toLocaleString()}</strong></>}
+                      </div>
+                    ))}
                     {form.show_oda && <div>{form.oda_person} (ODA-Pickup): <strong>₹{Number(form.oda_amount) || 0}</strong></div>}
-                    {form.show_pickup && form.pickup_entries.map((name, i) => <div key={i}>Pickup ({name}): <strong>₹{Number(form.pickup_rate) || 0}</strong></div>)}
-                    {form.show_other && form.other_desc && <div>{form.other_desc}: <strong>₹{Number(form.other_amount) || 0}</strong></div>}
+                    {form.show_pickup && form.pickup_entries.map((entry, i) => <div key={i}>Pickup ({entry.name}): <strong>₹{Number(entry.rate) || 0}</strong></div>)}
+                    {form.show_other && form.other_entries.map((entry, i) => <div key={i}>{entry.description}: <strong>₹{Number(entry.amount) || 0}</strong></div>)}
                     <div style={{ fontWeight: 600, borderTop: "1px solid #eee", paddingTop: 4, marginTop: 4 }}>
                       Total Extra: ₹{getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0).toLocaleString()}
                     </div>

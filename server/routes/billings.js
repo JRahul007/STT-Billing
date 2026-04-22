@@ -5,10 +5,10 @@ const { supabase } = require("../config/db");
 // Helper: extract extra_data JSON from request body
 function extractExtraData(body) {
   const {
-    show_packaging, boxes, box_rate,
+    show_packaging, boxes, box_rate, packaging_entries,
     show_oda, oda_location, oda_person, oda_amount,
     show_pickup, pickup_rate, pickup_entries,
-    show_other, other_desc, other_amount,
+    show_other, other_desc, other_amount, other_entries,
     consigner_name, consigner_address, consigner_mobile,
     consignee_name, consignee_address, consignee_mobile,
   } = body;
@@ -16,6 +16,7 @@ function extractExtraData(body) {
     show_packaging: show_packaging || false,
     boxes: boxes || "1",
     box_rate: box_rate || "150",
+    packaging_entries: packaging_entries || [],
     show_oda: show_oda || false,
     oda_location: oda_location || "",
     oda_person: oda_person || "",
@@ -26,6 +27,7 @@ function extractExtraData(body) {
     show_other: show_other || false,
     other_desc: other_desc || "",
     other_amount: other_amount || "",
+    other_entries: other_entries || [],
     consigner_name: consigner_name || "",
     consigner_address: consigner_address || "",
     consigner_mobile: consigner_mobile || "",

@@ -52,6 +52,7 @@ const emptyForm = {
 };
 
 export default function Vehicle() {
+  const RECORDS_PER_PAGE = 10;
   const [entries, setEntries] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -59,6 +60,7 @@ export default function Vehicle() {
   const [filterClient, setFilterClient] = useState("");
   const [filterMonth, setFilterMonth] = useState("");
   const [filterYear, setFilterYear] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     try {
@@ -313,6 +315,24 @@ export default function Vehicle() {
     filteredEntries.reduce((sum, en) => sum + (parseFloat(en.expenses) || 0), 0),
   [filteredEntries]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / RECORDS_PER_PAGE));
+  const paginatedEntries = useMemo(() => {
+    const start = (currentPage - 1) * RECORDS_PER_PAGE;
+    return filteredEntries.slice(start, start + RECORDS_PER_PAGE);
+  }, [filteredEntries, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterClient, filterMonth, filterYear]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const pageNumbers = useMemo(() => Array.from({ length: totalPages }, (_, i) => i + 1), [totalPages]);
+
   return (
     <div>
       {/* Header */}
@@ -385,7 +405,7 @@ export default function Vehicle() {
                 </td>
               </tr>
             ) : (
-              filteredEntries.map((en) => (
+              paginatedEntries.map((en) => (
                 <tr key={en.id}>
                   <td style={{ fontWeight: 600, color: "#4361ee" }}>{en.invoice_no}</td>
                   <td>{en.date}</td>
@@ -413,6 +433,46 @@ export default function Vehicle() {
           </tbody>
         </table>
       </div>
+      {filteredEntries.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            style={{ minWidth: 84, opacity: currentPage === 1 ? 0.6 : 1 }}
+          >
+            Previous
+          </button>
+          {pageNumbers.map((page) => (
+            <button
+              key={page}
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setCurrentPage(page)}
+              style={{
+                minWidth: 38,
+                background: currentPage === page ? "#4361ee" : "#fff",
+                color: currentPage === page ? "#fff" : "#111",
+                border: "1px solid #d1d5db",
+                borderRadius: 8,
+                fontWeight: currentPage === page ? 700 : 500,
+              }}
+            >
+              {page}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={currentPage === totalPages}
+            onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+            style={{ minWidth: 84, opacity: currentPage === totalPages ? 0.6 : 1 }}
+          >
+            Next
+          </button>
+        </div>
+      )}
 
       {/* Add/Edit Modal */}
       {showModal && (
