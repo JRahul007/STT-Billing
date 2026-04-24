@@ -18,7 +18,10 @@
       "Bash(firebase deploy:*)",
       "Bash(wait)",
       "Bash(node -e \"require\\('@babel/parser'\\).parse\\(require\\('fs'\\).readFileSync\\('src/pages/InvoiceCreate.jsx','utf8'\\),{sourceType:'module',plugins:['jsx']}\\);console.log\\('ok'\\);\")",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(git -C \"d:/invoice_maker\" status --short)",
+      "Bash(git -C \"d:/invoice_maker\" log --oneline -5)",
+      "Bash(git -C \"d:/invoice_maker\" show --stat HEAD)"
     ]
   }
 }

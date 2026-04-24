@@ -65,6 +65,21 @@ function normalizePackagingEntries(inv) {
   return [];
 }
 
+function normalizeDeliveryEntries(inv) {
+  if (!Array.isArray(inv?.delivery_entries)) return [];
+  return inv.delivery_entries
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return { name: entry, rate: String(inv?.delivery_rate || "600") };
+      }
+      return {
+        name: String(entry?.name || entry?.person || ""),
+        rate: String(entry?.rate ?? inv?.delivery_rate ?? "600"),
+      };
+    })
+    .filter((entry) => entry.name.trim());
+}
+
 function normalizePickupEntries(inv) {
   if (!Array.isArray(inv?.pickup_entries)) return [];
   return inv.pickup_entries
@@ -192,11 +207,14 @@ export default function InvoiceCreate() {
     packaging_amount: "",
     packaging_entries: [],
     packaging_edit_index: null,
-    // ODA Pickup
-    show_oda: false,
-    oda_location: "Bhosri",
-    oda_person: "Ankit P",
-    oda_amount: "600",
+    // Delivery Charges (list of {name, rate})
+    show_delivery: false,
+    delivery_roster: ["Ankit P", "Ravi K", "Suresh M"],
+    delivery_new_name: "",
+    delivery_entries: [],
+    delivery_selected_name: "",
+    delivery_edit_index: null,
+    delivery_rate: "600",
     // Pickup Charges
     show_pickup: false,
     pickup_roster: ["Ankit Yadav", "Dhiraj Maske", "Tirath Mali"],
@@ -274,7 +292,8 @@ export default function InvoiceCreate() {
       ? (Number(entry.amount) || 0)
       : ((Number(entry.boxes) || 0) * (Number(entry.rate) || 0))
   ), 0);
-  const odaAmount = Number(inv.oda_amount) || 0;
+  const deliveryEntries = normalizeDeliveryEntries(inv);
+  const deliveryTotal = deliveryEntries.reduce((sum, entry) => sum + (Number(entry.rate) || 0), 0);
   const pickupEntries = normalizePickupEntries(inv);
   const pickupTotal = pickupEntries.reduce((sum, entry) => sum + (Number(entry.rate) || 0), 0);
   const otherEntries = normalizeOtherEntries(inv);
@@ -283,7 +302,7 @@ export default function InvoiceCreate() {
   const baseAmount = inv.is_monthly ? monthlyAmount : weightAmount;
   const totalAmount = baseAmount
     + (inv.show_packaging ? packagingAmount : 0)
-    + (inv.show_oda ? odaAmount : 0)
+    + (inv.show_delivery ? deliveryTotal : 0)
     + (inv.show_pickup ? pickupTotal : 0)
     + (inv.show_other ? otherAmount : 0);
 
@@ -433,6 +452,24 @@ export default function InvoiceCreate() {
     });
   };
 
+  const upsertDeliveryEntry = () => {
+    const nextEntry = {
+      name: (inv.delivery_selected_name || "").trim(),
+      rate: String(inv.delivery_rate || "").trim(),
+    };
+    if (!nextEntry.name || !nextEntry.rate) return;
+    const nextEntries = [...deliveryEntries];
+    if (inv.delivery_edit_index !== null) nextEntries[inv.delivery_edit_index] = nextEntry;
+    else nextEntries.push(nextEntry);
+    setInv({
+      ...inv,
+      delivery_entries: nextEntries,
+      delivery_selected_name: "",
+      delivery_rate: "600",
+      delivery_edit_index: null,
+    });
+  };
+
   const upsertOtherEntry = () => {
     const nextEntry = {
       description: inv.other_desc.trim(),
@@ -475,10 +512,9 @@ export default function InvoiceCreate() {
       boxes: inv.boxes || "1",
       box_rate: legacyFields.box_rate,
       packaging_entries: packagingEntries,
-      show_oda: inv.show_oda || false,
-      oda_location: inv.oda_location || "",
-      oda_person: inv.oda_person || "",
-      oda_amount: inv.oda_amount || "",
+      show_delivery: inv.show_delivery || false,
+      delivery_entries: deliveryEntries,
+      delivery_rate: inv.delivery_rate || "600",
       show_pickup: inv.show_pickup || false,
       pickup_entries: pickupEntries,
       pickup_rate: legacyFields.pickup_rate,
@@ -659,7 +695,7 @@ export default function InvoiceCreate() {
           </button>
           <div style={{ position: "relative" }}>
             <button className="btn btn-sm"
-              style={{ background: (inv.show_packaging || inv.show_oda || inv.show_pickup || inv.show_other) ? "#4361ee" : "#555", color: "#fff", padding: "8px 14px", borderRadius: 8 }}
+              style={{ background: (inv.show_packaging || inv.show_delivery || inv.show_pickup || inv.show_other) ? "#4361ee" : "#555", color: "#fff", padding: "8px 14px", borderRadius: 8 }}
               onClick={() => setInv({ ...inv, showExtrasDropdown: !inv.showExtrasDropdown })}>
               Extra Charges ▾
             </button>
@@ -756,32 +792,84 @@ export default function InvoiceCreate() {
                   )}
                 </div>
 
-                {/* --- ODA Pickup --- */}
+                {/* --- Delivery Charges (multi-entry, mirrors Pickup Charges) --- */}
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid #eee" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <strong style={{ fontSize: 13 }}>ODA Pickup Location</strong>
+                    <strong style={{ fontSize: 13 }}>Delivery Charges</strong>
                     <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                      <input type="checkbox" checked={inv.show_oda}
-                        onChange={(e) => setInv({ ...inv, show_oda: e.target.checked })} /> Enable
+                      <input type="checkbox" checked={inv.show_delivery}
+                        onChange={(e) => setInv({ ...inv, show_delivery: e.target.checked })} /> Enable
                     </label>
                   </div>
-                  {inv.show_oda && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div>
-                        <label style={{ fontSize: 11, color: "#555" }}>Location</label>
-                        <input style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                          value={inv.oda_location} onChange={(e) => setInv({ ...inv, oda_location: e.target.value })} />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 11, color: "#555" }}>Person Name</label>
-                        <input style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                          value={inv.oda_person} onChange={(e) => setInv({ ...inv, oda_person: e.target.value })} />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 11, color: "#555" }}>Amount (₹)</label>
+                  {inv.show_delivery && (
+                    <div>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ fontSize: 11, color: "#555" }}>Rate per Delivery (₹)</label>
                         <input type="number" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                          value={inv.oda_amount} onChange={(e) => setInv({ ...inv, oda_amount: e.target.value })} />
+                          value={inv.delivery_rate} onChange={(e) => setInv({ ...inv, delivery_rate: e.target.value })} />
                       </div>
+
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ fontSize: 11, color: "#555" }}>Select Person</label>
+                        <select style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
+                          value={inv.delivery_selected_name} onChange={(e) => setInv({ ...inv, delivery_selected_name: e.target.value })}>
+                          <option value="">-- Select name to add --</option>
+                          {(inv.delivery_roster || []).map((name, i) => (
+                            <option key={i} value={name}>{name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                        <button type="button" className="btn btn-sm" style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
+                          onClick={upsertDeliveryEntry}>
+                          {inv.delivery_edit_index !== null ? "Update Entry" : "Add Entry"}
+                        </button>
+                      </div>
+
+                      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                        <input style={{ flex: 1, padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}
+                          placeholder="Add new name to list"
+                          value={inv.delivery_new_name || ""}
+                          onChange={(e) => setInv({ ...inv, delivery_new_name: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && (inv.delivery_new_name || "").trim()) {
+                              e.preventDefault();
+                              setInv({ ...inv, delivery_roster: [...(inv.delivery_roster || []), inv.delivery_new_name.trim()], delivery_new_name: "" });
+                            }
+                          }} />
+                        <button className="btn btn-sm" style={{ background: "#444", color: "#fff", padding: "4px 10px", borderRadius: 6, fontSize: 11 }}
+                          onClick={() => {
+                            if ((inv.delivery_new_name || "").trim()) {
+                              setInv({ ...inv, delivery_roster: [...(inv.delivery_roster || []), inv.delivery_new_name.trim()], delivery_new_name: "" });
+                            }
+                          }}>+ Name</button>
+                      </div>
+
+                      {deliveryEntries.length > 0 && (
+                        <div style={{ marginBottom: 4 }}>
+                          <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({deliveryEntries.length})</label>
+                          {deliveryEntries.map((entry, i) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12 }}>
+                              <span>Delivery Charges (<strong>{entry.name}</strong>)</span>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ color: "#555" }}>₹{entry.rate}</span>
+                                <button type="button" className="btn btn-sm" style={{ background: "#f3f4f6", color: "#111", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                  onClick={() => setInv({ ...inv, delivery_selected_name: entry.name, delivery_rate: String(entry.rate || "600"), delivery_edit_index: i })}>
+                                  Edit
+                                </button>
+                                <button type="button" className="btn btn-sm" style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
+                                  onClick={() => setInv({ ...inv, delivery_entries: deliveryEntries.filter((_, idx) => idx !== i), delivery_edit_index: inv.delivery_edit_index === i ? null : inv.delivery_edit_index })}>
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          <div style={{ borderTop: "1px solid #eee", marginTop: 4, paddingTop: 4, fontSize: 12, fontWeight: "bold" }}>
+                            Total: ₹{deliveryEntries.reduce((sum, entry) => sum + (Number(entry.rate) || 0), 0)}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1242,18 +1330,18 @@ export default function InvoiceCreate() {
               </tr>
             ))}
 
-            {/* --- ODA PICKUP ROW (optional) --- */}
-            {inv.show_oda && (
-              <tr>
+            {/* --- DELIVERY CHARGES ROWS (optional, one per person) --- */}
+            {inv.show_delivery && deliveryEntries.map((entry, i) => (
+              <tr key={`delivery-${i}`}>
                 <td colSpan={inv.is_monthly ? 5 : 1} style={{ padding: "8px 10px" }}>
-                  <strong>{inv.oda_location} Pickup-ODA Location ({inv.oda_person})</strong>
+                  <strong>Delivery Charges ({entry.name})</strong>
                 </td>
                 {!inv.is_monthly && (<><td></td><td></td><td></td><td></td></>)}
                 <td style={{ textAlign: "center", verticalAlign: "middle", fontWeight: "bold", fontSize: 14 }}>
-                  {odaAmount > 0 ? odaAmount.toFixed(0) : ""}
+                  {Number(entry.rate) || 0}
                 </td>
               </tr>
-            )}
+            ))}
 
             {/* --- PICKUP CHARGES ROWS (optional, one per person) --- */}
             {inv.show_pickup && pickupEntries.map((entry, i) => (

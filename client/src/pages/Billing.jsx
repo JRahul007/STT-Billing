@@ -68,10 +68,12 @@ const emptyForm = {
   packaging_amount: "",
   packaging_entries: [],
   packaging_edit_index: null,
-  show_oda: false,
-  oda_location: "Bhosri",
-  oda_person: "Ankit P",
-  oda_amount: "600",
+  show_delivery: false,
+  delivery_rate: "600",
+  delivery_entries: [],
+  delivery_selected_name: "",
+  delivery_edit_index: null,
+  delivery_new_name: "",
   show_pickup: false,
   pickup_rate: "600",
   pickup_entries: [],
@@ -167,6 +169,21 @@ function normalizePickupEntries(b) {
     .filter((entry) => entry.name.trim());
 }
 
+function normalizeDeliveryEntries(b) {
+  if (!Array.isArray(b?.delivery_entries)) return [];
+  return b.delivery_entries
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return { name: entry, rate: String(b?.delivery_rate || "600") };
+      }
+      return {
+        name: String(entry?.name || entry?.person || ""),
+        rate: String(entry?.rate ?? b?.delivery_rate ?? "600"),
+      };
+    })
+    .filter((entry) => entry.name.trim());
+}
+
 function normalizeOtherEntries(b) {
   if (Array.isArray(b?.other_entries) && b.other_entries.length > 0) {
     return b.other_entries
@@ -188,16 +205,19 @@ function normalizeOtherEntries(b) {
 function getLegacyExtraFields(source) {
   const packagingEntries = normalizePackagingEntries(source);
   const pickupEntries = normalizePickupEntries(source);
+  const deliveryEntries = normalizeDeliveryEntries(source);
   const otherEntries = normalizeOtherEntries(source);
   const firstPackaging = packagingEntries[0] || {};
   const firstBoxPackaging = packagingEntries.find((entry) => entry.kind !== "ice_box") || {};
   const firstPickup = pickupEntries[0] || {};
+  const firstDelivery = deliveryEntries[0] || {};
   const firstOther = otherEntries[0] || {};
 
   return {
     boxes: firstBoxPackaging.boxes ? String(firstBoxPackaging.boxes || "1") : "1",
     box_rate: firstBoxPackaging.rate ? String(firstBoxPackaging.rate || "150") : "150",
     pickup_rate: pickupEntries.length > 0 ? String(firstPickup.rate || "600") : "600",
+    delivery_rate: deliveryEntries.length > 0 ? String(firstDelivery.rate || "600") : "600",
     other_desc: otherEntries.length > 0 ? String(firstOther.description || "") : "",
     other_amount: otherEntries.length > 0 ? String(firstOther.amount || "") : "",
   };
@@ -219,10 +239,14 @@ function getExtraChargeItems(b) {
       }
     });
   }
-  if (b.show_oda) items.push({ description: `${b.oda_person || ""} (ODA-Pickup)`, amount: Number(b.oda_amount) || 0 });
   if (b.show_pickup) {
     normalizePickupEntries(b).forEach((entry) => {
       items.push({ description: `Pickup (${entry.name})`, amount: Number(entry.rate) || 0 });
+    });
+  }
+  if (b.show_delivery) {
+    normalizeDeliveryEntries(b).forEach((entry) => {
+      items.push({ description: `Delivery (${entry.name})`, amount: Number(entry.rate) || 0 });
     });
   }
   if (b.show_other) {
@@ -307,6 +331,10 @@ export default function Billing() {
   const [pickupRoster, setPickupRoster] = useState(() => {
     const saved = localStorage.getItem("pickup_roster");
     return saved ? JSON.parse(saved) : ["Ankit Yadav", "Dhiraj Maske", "Tirath Mali"];
+  });
+  const [deliveryRoster, setDeliveryRoster] = useState(() => {
+    const saved = localStorage.getItem("delivery_roster");
+    return saved ? JSON.parse(saved) : ["Ankit P", "Ravi K", "Suresh M"];
   });
   const [consigners, setConsigners] = useState(() => [normalizeParty(DEFAULT_CONSIGNER)]);
   const [consignees, setConsignees] = useState(() => [normalizeParty(DEFAULT_CONSIGNEE)]);
@@ -876,11 +904,23 @@ export default function Billing() {
     }
   };
 
+  // Parse `invoice_data` JSON blob back onto the record so extras (packaging/pickup/ODA/other)
+  // round-trip through the server. The server only persists 11 named columns — anything else
+  // has to live inside `invoice_data`.
+  const hydrateBilling = (b) => {
+    if (!b || !b.invoice_data) return b;
+    try {
+      const parsed = typeof b.invoice_data === "string" ? JSON.parse(b.invoice_data) : b.invoice_data;
+      if (parsed && typeof parsed === "object") return { ...parsed, ...b };
+    } catch (e) { /* ignore malformed JSON */ }
+    return b;
+  };
+
   const loadData = () => {
     const localInvoices = JSON.parse(localStorage.getItem("invoices") || "[]");
     getBillings().then((res) => {
       // Merge: API data + local invoices (avoid duplicates by invoice_no)
-      const apiData = res.data || [];
+      const apiData = (res.data || []).map(hydrateBilling);
       const apiNos = new Set(apiData.map((d) => d.invoice_no));
       const merged = [...apiData, ...localInvoices.filter((l) => !apiNos.has(l.invoice_no))];
       setBillings(merged);
@@ -953,6 +993,39 @@ export default function Billing() {
     });
   };
 
+  const upsertDeliveryEntry = () => {
+    const name = (form.delivery_selected_name || "").trim();
+    const rate = String(form.delivery_rate || "").trim();
+    if (!name || !rate) return;
+    const nextEntry = { name, rate };
+    const nextEntries = [...form.delivery_entries];
+    if (form.delivery_edit_index !== null) nextEntries[form.delivery_edit_index] = nextEntry;
+    else nextEntries.push(nextEntry);
+    setForm({
+      ...form,
+      delivery_entries: nextEntries,
+      delivery_selected_name: "",
+      delivery_rate: "600",
+      delivery_edit_index: null,
+    });
+  };
+
+  // Inline rate editor: when user types a rate next to the route dropdown, update the
+  // route's rate_per_kg in both state and localStorage so auto-freight fires immediately.
+  const handleRouteRateChange = (newRate) => {
+    if (!form.location_route) return;
+    const sanitized = String(newRate).replace(/[^0-9.]/g, "");
+    const updated = locations.map((loc) =>
+      loc.route === form.location_route ? { ...loc, rate_per_kg: sanitized } : loc
+    );
+    // If the selected route isn't in the locations list yet (edge case), add it.
+    if (!locations.some((loc) => loc.route === form.location_route)) {
+      updated.push({ route: form.location_route, rate_per_kg: sanitized });
+    }
+    setLocations(updated);
+    saveLocationsToStorage(updated);
+  };
+
   const upsertOtherEntry = () => {
     const description = form.other_desc.trim();
     const amount = String(form.other_amount || "").trim();
@@ -995,7 +1068,38 @@ export default function Billing() {
     delete submitData.pickup_selected_name;
     delete submitData.pickup_edit_index;
     delete submitData.pickup_new_name;
+    delete submitData.delivery_selected_name;
+    delete submitData.delivery_edit_index;
+    delete submitData.delivery_new_name;
     delete submitData.other_edit_index;
+
+    // Serialize all extras into the invoice_data TEXT column so they round-trip through the server.
+    // The server schema only stores 11 named columns; anything outside that whitelist must live in
+    // invoice_data. Without this, packaging/delivery/pickup/other entries disappear on reload and
+    // the downloaded invoice PDF shows no extras.
+    submitData.invoice_data = JSON.stringify({
+      consigner_name: submitData.consigner_name,
+      consigner_address: submitData.consigner_address,
+      consigner_mobile: submitData.consigner_mobile,
+      consignee_name: submitData.consignee_name,
+      consignee_address: submitData.consignee_address,
+      consignee_mobile: submitData.consignee_mobile,
+      freight_amount: freight,
+      show_packaging: submitData.show_packaging,
+      packaging_entries: submitData.packaging_entries,
+      boxes: submitData.boxes,
+      box_rate: submitData.box_rate,
+      show_delivery: submitData.show_delivery,
+      delivery_entries: submitData.delivery_entries,
+      delivery_rate: submitData.delivery_rate,
+      show_pickup: submitData.show_pickup,
+      pickup_entries: submitData.pickup_entries,
+      pickup_rate: submitData.pickup_rate,
+      show_other: submitData.show_other,
+      other_entries: submitData.other_entries,
+      other_desc: submitData.other_desc,
+      other_amount: submitData.other_amount,
+    });
 
     if (editing) {
       // If record has a numeric DB id, try API update; otherwise update localStorage
@@ -1060,10 +1164,12 @@ export default function Billing() {
     const freightAmount = totalRounded - extrasTotal;
     const packagingEntries = normalizePackagingEntries(b);
     const pickupEntries = normalizePickupEntries(b);
+    const deliveryEntries = normalizeDeliveryEntries(b);
     const otherEntries = normalizeOtherEntries(b);
     const legacyFields = getLegacyExtraFields({
       packaging_entries: packagingEntries,
       pickup_entries: pickupEntries,
+      delivery_entries: deliveryEntries,
       other_entries: otherEntries,
     });
     setForm({
@@ -1092,10 +1198,12 @@ export default function Billing() {
       packaging_amount: "",
       packaging_entries: packagingEntries,
       packaging_edit_index: null,
-      show_oda: b.show_oda || false,
-      oda_location: b.oda_location || "Bhosri",
-      oda_person: b.oda_person || "Ankit P",
-      oda_amount: b.oda_amount || "600",
+      show_delivery: b.show_delivery || false,
+      delivery_rate: legacyFields.delivery_rate,
+      delivery_entries: deliveryEntries,
+      delivery_selected_name: "",
+      delivery_edit_index: null,
+      delivery_new_name: "",
       show_pickup: b.show_pickup || false,
       pickup_rate: legacyFields.pickup_rate,
       pickup_entries: pickupEntries,
@@ -1536,10 +1644,9 @@ export default function Billing() {
       box_rate: String(b.box_rate || "150"),
       packaging_entries: normalizePackagingEntries(b),
       show_packaging: b.show_packaging || false,
-      show_oda: b.show_oda || false,
-      oda_location: b.oda_location || "Bhosri",
-      oda_person: b.oda_person || "Ankit P",
-      oda_amount: String(b.oda_amount || "600"),
+      show_delivery: b.show_delivery || false,
+      delivery_entries: normalizeDeliveryEntries(b),
+      delivery_rate: String(b.delivery_rate || "600"),
       show_pickup: b.show_pickup || false,
       pickup_entries: normalizePickupEntries(b),
       pickup_rate: String(b.pickup_rate || "600"),
@@ -1808,633 +1915,725 @@ export default function Billing() {
         </div>
       )}
 
-      {showModal && (
+      {showModal && (() => {
+        const extrasActive = form.show_packaging || form.show_delivery || form.show_pickup || form.show_other;
+        const extrasCount = (form.show_packaging ? 1 : 0) + (form.show_delivery ? 1 : 0) + (form.show_pickup ? 1 : 0) + (form.show_other ? 1 : 0);
+        const freightNum = Math.round(Number(form.total_amount) || 0);
+        const extrasTotal = getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0);
+        const grandTotal = freightNum + extrasTotal;
+        return (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>{editing ? "Edit Billing" : "Add Billing"}</h2>
-            <form onSubmit={handleSubmit}>
-              <div className="form-group">
-                <label>Invoice No.</label>
-                <div style={{ display: "flex", alignItems: "stretch", border: "1.5px solid #e6e8f2", borderRadius: 10, overflow: "hidden", background: "#fafbff" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", padding: "0 14px", background: "linear-gradient(135deg,#eef0fa,#e2e6f5)", color: "#334155", fontWeight: 700, fontSize: 14, letterSpacing: "0.04em", borderRight: "1px solid #e6e8f2", userSelect: "none" }}>STT-</span>
-                  <input
-                    required
-                    value={(form.invoice_no || "").replace(/^STT-/i, "")}
-                    onChange={(e) => {
-                      const suffix = e.target.value.replace(/^STT-/i, "").replace(/[^A-Za-z0-9\-]/g, "");
-                      setForm({ ...form, invoice_no: `STT-${suffix}` });
-                    }}
-                    placeholder="001"
-                    style={{ border: "none", flex: 1, padding: "11px 14px", background: "transparent", outline: "none", fontSize: 14, fontFamily: "inherit", color: "#0f172a" }}
-                  />
-                </div>
+          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="friendly-modal-header">
+              <h2>
+                <span style={{ fontSize: 24 }}>{editing ? "✏️" : "🧾"}</span>
+                {editing ? "Edit Billing" : "Create New Billing"}
+              </h2>
+              <div className="friendly-subtitle">
+                {editing
+                  ? "Update the details below and save your changes."
+                  : "Fill out the required sections to create a new bill. Optional sections can be skipped."}
               </div>
-              <div className="form-group">
-                <label>Date</label>
-                <input type="date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Location</label>
-                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                  <select
-                    style={{ flex: 1 }}
-                    value={form.location_route || ""}
-                    onChange={(e) => setForm({ ...form, location_route: e.target.value })}
-                  >
-                    <option value="">-- Select Route --</option>
-                    {locations.map((loc) => (
-                      <option key={loc.route} value={loc.route}>
-                        {loc.route}{loc.rate_per_kg ? ` (₹${loc.rate_per_kg}/kg)` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    style={{ flex: 1 }}
-                    placeholder="Client name (optional)"
-                    value={form.location_client || ""}
-                    onChange={(e) => setForm({ ...form, location_client: e.target.value })}
-                  />
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={openLocationManager}>
-                    {showLocationManager ? "Close Manage Location" : "Manage Location"}
-                  </button>
-                  {selectedLocationConfig?.rate_per_kg && (
-                    <div style={{ fontSize: 13, color: "#4361ee", fontWeight: 600 }}>
-                      Rate: ₹{Number(selectedLocationConfig.rate_per_kg).toLocaleString("en-IN")}/kg
+              <button type="button" className="modal-close-btn" aria-label="Close" onClick={() => setShowModal(false)}>×</button>
+            </div>
+            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+              <div className="friendly-modal-body">
+
+                {/* STEP 1 — BASIC INFO */}
+                <div className="step-card">
+                  <div className="step-card-header">
+                    <div className="step-badge">1</div>
+                    <div className="step-card-title">
+                      <h3>Basic Details <span className="badge-required">Required</span></h3>
+                      <p>Invoice number, date and route for this shipment.</p>
                     </div>
-                  )}
-                </div>
-                {showLocationManager && (
-                  <div style={{ marginTop: 10, border: "1px solid #dbe3f3", borderRadius: 12, background: "#f8faff", padding: 12 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr auto", gap: 8, alignItems: "end" }}>
-                      <div>
-                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Route</label>
-                        <input
-                          placeholder="e.g. PUNE-BOM"
-                          value={locationForm.route}
-                          onChange={(e) => setLocationForm((prev) => ({ ...prev, route: e.target.value.toUpperCase() }))}
-                        />
+                  </div>
+                  <div className="step-card-body">
+                    <div className="field-row">
+                      <div className="form-group">
+                        <label>Invoice Number</label>
+                        <div className="invoice-prefix-input">
+                          <span className="prefix-badge">STT-</span>
+                          <input
+                            required
+                            value={(form.invoice_no || "").replace(/^STT-/i, "")}
+                            onChange={(e) => {
+                              const suffix = e.target.value.replace(/^STT-/i, "").replace(/[^A-Za-z0-9\-]/g, "");
+                              setForm({ ...form, invoice_no: `STT-${suffix}` });
+                            }}
+                            placeholder="001"
+                          />
+                        </div>
+                        <div className="helper-hint">Auto-generated — edit if needed.</div>
                       </div>
-                      <div>
-                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Rate per KG</label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          placeholder="40"
-                          value={locationForm.rate_per_kg}
-                          onChange={(e) => setLocationForm((prev) => ({ ...prev, rate_per_kg: e.target.value }))}
-                        />
+                      <div className="form-group">
+                        <label>Date</label>
+                        <input type="date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
                       </div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button type="button" className="btn btn-primary btn-sm" onClick={handleSaveLocation}>
-                          {locationEditingRoute ? "Update" : "Add"}
+                    </div>
+
+                    <div className="form-group">
+                      <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>Route &amp; Client</span>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={openLocationManager}>
+                          {showLocationManager ? "Close Manager" : "+ Manage Routes"}
                         </button>
-                        {locationEditingRoute && (
-                          <button type="button" className="btn btn-sm btn-secondary" onClick={resetLocationManager}>
-                            Cancel
-                          </button>
+                      </label>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <select
+                          style={{ flex: "1 1 180px" }}
+                          value={form.location_route || ""}
+                          onChange={(e) => setForm({ ...form, location_route: e.target.value })}
+                        >
+                          <option value="">Select a route…</option>
+                          {locations.map((loc) => (
+                            <option key={loc.route} value={loc.route}>
+                              {loc.route}{loc.rate_per_kg ? ` (₹${loc.rate_per_kg}/kg)` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {/* Inline rate editor — saves to route on change so auto-freight fires immediately */}
+                        {form.location_route && (
+                          <div className="rate-chip" title="Rate per kg for this route">
+                            <span className="rate-chip-label">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="0"
+                              value={selectedLocationConfig?.rate_per_kg || ""}
+                              onChange={(e) => handleRouteRateChange(e.target.value)}
+                            />
+                            <span className="rate-chip-label">/kg</span>
+                          </div>
+                        )}
+                        <input
+                          style={{ flex: "1 1 200px" }}
+                          placeholder="Client name (optional)"
+                          value={form.location_client || ""}
+                          onChange={(e) => setForm({ ...form, location_client: e.target.value })}
+                        />
+                      </div>
+                      {form.location_route && !selectedLocationConfig?.rate_per_kg && (
+                        <div className="helper-hint warn">
+                          ⚠️ No rate set for {form.location_route}. Type the rate in the ₹/kg box above to auto-calculate freight.
+                        </div>
+                      )}
+                      {selectedLocationConfig?.rate_per_kg && (
+                        <div className="helper-hint info">
+                          💡 Rate for {form.location_route}: ₹{Number(selectedLocationConfig.rate_per_kg).toLocaleString("en-IN")}/kg
+                        </div>
+                      )}
+                      {form.location_route && (
+                        <div className="helper-hint">
+                          Preview: <strong style={{ marginLeft: 4 }}>{form.location_route}{form.location_client ? ` (${form.location_client})` : ""}</strong>
+                        </div>
+                      )}
+                      {showLocationManager && (
+                        <div style={{ marginTop: 12, border: "1px solid #dbe3f3", borderRadius: 12, background: "#f8faff", padding: 14 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#4338ca", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Manage Routes</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr auto", gap: 8, alignItems: "end" }}>
+                            <div>
+                              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Route</label>
+                              <input
+                                placeholder="e.g. PUNE-BOM"
+                                value={locationForm.route}
+                                onChange={(e) => setLocationForm((prev) => ({ ...prev, route: e.target.value.toUpperCase() }))}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Rate per KG</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                placeholder="40"
+                                value={locationForm.rate_per_kg}
+                                onChange={(e) => setLocationForm((prev) => ({ ...prev, rate_per_kg: e.target.value }))}
+                              />
+                            </div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button type="button" className="btn btn-primary btn-sm" onClick={handleSaveLocation}>
+                                {locationEditingRoute ? "Update" : "Add"}
+                              </button>
+                              {locationEditingRoute && (
+                                <button type="button" className="btn btn-sm btn-secondary" onClick={resetLocationManager}>
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                            {locations.length === 0 ? (
+                              <div style={{ fontSize: 13, color: "#64748b" }}>No routes added yet.</div>
+                            ) : (
+                              locations.map((loc) => (
+                                <div
+                                  key={loc.route}
+                                  style={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    gap: 10,
+                                    padding: "10px 12px",
+                                    borderRadius: 10,
+                                    background: "#fff",
+                                    border: "1px solid #e2e8f0",
+                                  }}
+                                >
+                                  <div>
+                                    <div style={{ fontWeight: 700, color: "#0f172a" }}>{loc.route}</div>
+                                    <div style={{ fontSize: 12, color: "#64748b" }}>
+                                      {loc.rate_per_kg ? `₹${Number(loc.rate_per_kg).toLocaleString("en-IN")} per kg` : "Rate not set"}
+                                    </div>
+                                  </div>
+                                  <div style={{ display: "flex", gap: 8 }}>
+                                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => handleEditLocation(loc.route)}>Edit</button>
+                                    <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteLocation(loc.route)}>Delete</button>
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* STEP 2 — PARTIES */}
+                <div className="step-card">
+                  <div className="step-card-header">
+                    <div className="step-badge">2</div>
+                    <div className="step-card-title">
+                      <h3>Consigner &amp; Consignee <span className="badge-required">Required</span></h3>
+                      <p>Who's sending and who's receiving? Pick from saved parties or add new ones.</p>
+                    </div>
+                  </div>
+                  <div className="step-card-body">
+                    <div className="field-row">
+                      <div className="form-group">
+                        <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span>Consigner (Sender)</span>
+                          <button type="button" className="btn btn-sm btn-secondary" onClick={() => openPartyManager("consigner")}>+ Manage</button>
+                        </label>
+                        <select
+                          value={(() => {
+                            const index = findPartyIndex(consigners, {
+                              name: form.consigner_name,
+                              address: form.consigner_address,
+                              mobile: form.consigner_mobile,
+                            });
+                            return index >= 0 ? String(index) : "";
+                          })()}
+                          onChange={(e) => applySelectedParty("consigner", e.target.value)}
+                        >
+                          <option value="">Select consigner…</option>
+                          {consigners.map((party, index) => (
+                            <option key={`${party.name}-${index}`} value={index}>
+                              {party.name}
+                            </option>
+                          ))}
+                        </select>
+                        {form.consigner_name && (
+                          <div className="party-preview">
+                            <div className="pp-name">{formatPartyName(form.consigner_name)}</div>
+                            <div className="pp-detail">{form.consigner_address || "—"}</div>
+                            <div className="pp-detail">📞 {form.consigner_mobile || "—"}</div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="form-group">
+                        <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span>Consignee (Receiver)</span>
+                          <button type="button" className="btn btn-sm btn-secondary" onClick={() => openPartyManager("consignee")}>+ Manage</button>
+                        </label>
+                        <select
+                          value={(() => {
+                            const index = findPartyIndex(consignees, {
+                              name: form.consignee_name,
+                              address: form.consignee_address,
+                              mobile: form.consignee_mobile,
+                            });
+                            return index >= 0 ? String(index) : "";
+                          })()}
+                          onChange={(e) => applySelectedParty("consignee", e.target.value)}
+                        >
+                          <option value="">Select consignee…</option>
+                          {consignees.map((party, index) => (
+                            <option key={`${party.name}-${index}`} value={index}>
+                              {party.name}
+                            </option>
+                          ))}
+                        </select>
+                        {form.consignee_name && (
+                          <div className="party-preview">
+                            <div className="pp-name">{formatPartyName(form.consignee_name)}</div>
+                            <div className="pp-detail">{form.consignee_address || "—"}</div>
+                            <div className="pp-detail">📞 {form.consignee_mobile || "—"}</div>
+                          </div>
                         )}
                       </div>
                     </div>
-                    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                      {locations.length === 0 ? (
-                        <div style={{ fontSize: 13, color: "#64748b" }}>No locations added yet.</div>
-                      ) : (
-                        locations.map((loc) => (
-                          <div
-                            key={loc.route}
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              gap: 10,
-                              padding: "10px 12px",
-                              borderRadius: 10,
-                              background: "#fff",
-                              border: "1px solid #e2e8f0",
-                            }}
-                          >
-                            <div>
-                              <div style={{ fontWeight: 700, color: "#0f172a" }}>{loc.route}</div>
-                              <div style={{ fontSize: 12, color: "#64748b" }}>
-                                {loc.rate_per_kg ? `₹${Number(loc.rate_per_kg).toLocaleString("en-IN")} per kg` : "Rate not set"}
-                              </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 8 }}>
-                              <button type="button" className="btn btn-sm btn-secondary" onClick={() => handleEditLocation(loc.route)}>Edit</button>
-                              <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteLocation(loc.route)}>Delete</button>
-                            </div>
-                          </div>
-                        ))
-                      )}
+                  </div>
+                </div>
+
+                {/* STEP 3 — WEIGHT & FREIGHT */}
+                <div className="step-card">
+                  <div className="step-card-header">
+                    <div className="step-badge">3</div>
+                    <div className="step-card-title">
+                      <h3>Weight &amp; Freight <span className="badge-required">Required</span></h3>
+                      <p>Enter shipment weight — freight amount auto-calculates from the route rate.</p>
                     </div>
                   </div>
-                )}
-                {form.location_route && (
-                  <div style={{ marginTop: "6px", fontSize: "13px", color: "#555" }}>
-                    Preview: <strong>{form.location_route}{form.location_client ? `(${form.location_client})` : ""}</strong>
-                  </div>
-                )}
-              </div>
-              <div className="form-group">
-                <label>Weight (kgs)</label>
-                <input type="number" step="1" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
-                {selectedLocationConfig?.rate_per_kg && form.weight && Number(form.weight) > 0 && (
-                  <div style={{ marginTop: 6, fontSize: 13, color: "#475569" }}>
-                    Freight calculation: {Number(form.weight)} × ₹{Number(selectedLocationConfig.rate_per_kg).toLocaleString("en-IN")} = <strong>₹{(Number(form.weight) * Number(selectedLocationConfig.rate_per_kg)).toLocaleString("en-IN")}</strong>
-                  </div>
-                )}
-              </div>
-              <div className="form-group">
-                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>Consigner</span>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => openPartyManager("consigner")}>Manage</button>
-                </label>
-                <select
-                  value={(() => {
-                    const index = findPartyIndex(consigners, {
-                      name: form.consigner_name,
-                      address: form.consigner_address,
-                      mobile: form.consigner_mobile,
-                    });
-                    return index >= 0 ? String(index) : "";
-                  })()}
-                  onChange={(e) => applySelectedParty("consigner", e.target.value)}
-                >
-                  <option value="">-- Select Consigner --</option>
-                  {consigners.map((party, index) => (
-                    <option key={`${party.name}-${index}`} value={index}>
-                      {party.name}
-                    </option>
-                  ))}
-                </select>
-                {form.consigner_name && (
-                  <div style={{ marginTop: 8, border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", fontSize: 12, lineHeight: 1.6 }}>
-                    <div style={{ fontWeight: 700 }}>{formatPartyName(form.consigner_name)}</div>
-                    <div>{form.consigner_address || "-"}</div>
-                    <div>{form.consigner_mobile || "-"}</div>
-                  </div>
-                )}
-              </div>
-              <div className="form-group">
-                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>Consignee</span>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => openPartyManager("consignee")}>Manage</button>
-                </label>
-                <select
-                  value={(() => {
-                    const index = findPartyIndex(consignees, {
-                      name: form.consignee_name,
-                      address: form.consignee_address,
-                      mobile: form.consignee_mobile,
-                    });
-                    return index >= 0 ? String(index) : "";
-                  })()}
-                  onChange={(e) => applySelectedParty("consignee", e.target.value)}
-                >
-                  <option value="">-- Select Consignee --</option>
-                  {consignees.map((party, index) => (
-                    <option key={`${party.name}-${index}`} value={index}>
-                      {party.name}
-                    </option>
-                  ))}
-                </select>
-                {form.consignee_name && (
-                  <div style={{ marginTop: 8, border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", fontSize: 12, lineHeight: 1.6 }}>
-                    <div style={{ fontWeight: 700 }}>{formatPartyName(form.consignee_name)}</div>
-                    <div>{form.consignee_address || "-"}</div>
-                    <div>{form.consignee_mobile || "-"}</div>
-                  </div>
-                )}
-              </div>
-              <div className="form-group">
-                <label>Freight Amount</label>
-                <input type="number" step="1" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
-                {computedFreightAmount && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: "#16a34a", fontWeight: 600 }}>
-                    Auto-filled from selected location rate and weight.
-                  </div>
-                )}
-                {(() => {
-                  const freight = Math.round(Number(form.total_amount) || 0);
-                  const extras = getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0);
-                  const grand = freight + extras;
-                  if (extras > 0) {
-                    return (
-                      <div style={{ marginTop: 8, padding: "8px 12px", background: "#f0f4ff", border: "1px solid #c7d2fe", borderRadius: 8, fontSize: 13 }}>
-                        <div style={{ color: "#555" }}>Freight: ₹{freight.toLocaleString()} + Extras: ₹{extras.toLocaleString()}</div>
-                        <div style={{ marginTop: 4, fontWeight: 700, color: "#4361ee", fontSize: 15 }}>Grand Total: ₹{grand.toLocaleString()}</div>
+                  <div className="step-card-body">
+                    <div className="field-row">
+                      <div className="form-group">
+                        <label>Weight (kgs)</label>
+                        <input type="number" step="1" placeholder="0" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
+                        {selectedLocationConfig?.rate_per_kg && form.weight && Number(form.weight) > 0 && (
+                          <div className="helper-hint info">
+                            {Number(form.weight)} × ₹{Number(selectedLocationConfig.rate_per_kg).toLocaleString("en-IN")} = ₹{(Number(form.weight) * Number(selectedLocationConfig.rate_per_kg)).toLocaleString("en-IN")}
+                          </div>
+                        )}
                       </div>
-                    );
-                  }
-                  return null;
-                })()}
-              </div>
-              <div className="form-group">
-                <label>BOM Expense</label>
-                <input type="number" step="1" value={form.bom_expense} onChange={(e) => setForm({ ...form, bom_expense: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>BOM Exp Description</label>
-                <input value={form.bom_exp_description} onChange={(e) => setForm({ ...form, bom_exp_description: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Other Expense</label>
-                <input type="number" step="1" value={form.other_expense} onChange={(e) => setForm({ ...form, other_expense: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Other Exp Description</label>
-                <input value={form.other_exp_description} onChange={(e) => setForm({ ...form, other_exp_description: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>Extra Charges</span>
-                  <button type="button" className="btn btn-sm"
-                    style={{ padding: "4px 12px", fontSize: 12, background: (form.show_packaging || form.show_oda || form.show_pickup || form.show_other) ? "#4361ee" : "#555", color: "#fff", borderRadius: 6 }}
-                    onClick={() => setForm({ ...form, showExtrasDropdown: !form.showExtrasDropdown })}>
-                    Extra Charges ▾
-                  </button>
-                </label>
-                {form.showExtrasDropdown && (
-                  <div style={{ marginTop: 8, background: "#fff", border: "1px solid #ddd", borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.12)", padding: 0, maxHeight: "60vh", overflowY: "auto" }}>
+                      <div className="form-group">
+                        <label>Freight Amount (₹)</label>
+                        <input type="number" step="1" placeholder="0" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
+                        {computedFreightAmount ? (
+                          <div className="helper-hint success">✓ Auto-filled — change if needed.</div>
+                        ) : (
+                          <div className="helper-hint">Set route rate &amp; weight to auto-fill, or type manually.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-                    {/* --- Box & Packaging --- */}
-                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #eee" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <strong style={{ fontSize: 13 }}>Box &amp; Packaging</strong>
-                        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                          <input type="checkbox" checked={form.show_packaging}
-                            onChange={(e) => setForm({ ...form, show_packaging: e.target.checked })} /> Enable
-                        </label>
+                {/* STEP 4 — EXPENSES (OPTIONAL) */}
+                <div className="step-card optional">
+                  <div className="step-card-header">
+                    <div className="step-badge">4</div>
+                    <div className="step-card-title">
+                      <h3>Expenses <span className="badge-optional">Optional</span></h3>
+                      <p>Add BOM and other expenses linked to this shipment.</p>
+                    </div>
+                  </div>
+                  <div className="step-card-body">
+                    <div className="field-row">
+                      <div className="form-group">
+                        <label>BOM Expense (₹)</label>
+                        <input type="number" step="1" placeholder="0" value={form.bom_expense} onChange={(e) => setForm({ ...form, bom_expense: e.target.value })} />
                       </div>
-                      {form.show_packaging && (
-                        <div>
-                          <div style={{ marginBottom: 8 }}>
-                            <label style={{ fontSize: 11, color: "#555" }}>Packaging Type</label>
-                            <select
-                              style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value={form.packaging_mode}
-                              onChange={(e) => setForm({ ...form, packaging_mode: e.target.value })}
-                            >
-                              <option value="box">Box & Packaging</option>
-                              <option value="ice_box">Box & Packaging (Ice-Box)</option>
+                      <div className="form-group">
+                        <label>BOM Description</label>
+                        <input placeholder="What was the expense for?" value={form.bom_exp_description} onChange={(e) => setForm({ ...form, bom_exp_description: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="field-row">
+                      <div className="form-group">
+                        <label>Other Expense (₹)</label>
+                        <input type="number" step="1" placeholder="0" value={form.other_expense} onChange={(e) => setForm({ ...form, other_expense: e.target.value })} />
+                      </div>
+                      <div className="form-group">
+                        <label>Other Description</label>
+                        <input placeholder="Description of expense" value={form.other_exp_description} onChange={(e) => setForm({ ...form, other_exp_description: e.target.value })} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* STEP 5 — EXTRA CHARGES (toggle pills + sub-panels) */}
+                <div className="step-card optional">
+                  <div className="step-card-header">
+                    <div className="step-badge">5</div>
+                    <div className="step-card-title">
+                      <h3>
+                        Extra Charges
+                        <span className="badge-optional">Optional</span>
+                        {extrasActive && extrasTotal > 0 && (
+                          <span style={{ fontSize: 12, fontWeight: 700, color: "#4338ca", background: "#eef0fa", padding: "2px 8px", borderRadius: 999 }}>
+                            ₹{extrasTotal.toLocaleString("en-IN")}
+                          </span>
+                        )}
+                      </h3>
+                      <p>Toggle any charges that apply — packaging, delivery, pickup, or other line items.</p>
+                    </div>
+                  </div>
+                  <div className="step-card-body">
+                    <div className="extras-toggle-row">
+                      <label className={`extras-toggle-pill ${form.show_packaging ? "active" : ""}`}>
+                        <span className="pill-icon">📦</span>
+                        <span>Box &amp; Packaging</span>
+                        <input type="checkbox" checked={form.show_packaging}
+                          onChange={(e) => setForm({ ...form, show_packaging: e.target.checked })} />
+                      </label>
+                      <label className={`extras-toggle-pill ${form.show_delivery ? "active" : ""}`}>
+                        <span className="pill-icon">🚛</span>
+                        <span>Delivery Charges</span>
+                        <input type="checkbox" checked={form.show_delivery}
+                          onChange={(e) => setForm({ ...form, show_delivery: e.target.checked })} />
+                      </label>
+                      <label className={`extras-toggle-pill ${form.show_pickup ? "active" : ""}`}>
+                        <span className="pill-icon">🚚</span>
+                        <span>Pickup Charges</span>
+                        <input type="checkbox" checked={form.show_pickup}
+                          onChange={(e) => setForm({ ...form, show_pickup: e.target.checked })} />
+                      </label>
+                      <label className={`extras-toggle-pill ${form.show_other ? "active" : ""}`}>
+                        <span className="pill-icon">💰</span>
+                        <span>Other Charges</span>
+                        <input type="checkbox" checked={form.show_other}
+                          onChange={(e) => setForm({ ...form, show_other: e.target.checked })} />
+                      </label>
+                    </div>
+
+                    {/* Box & Packaging sub-panel */}
+                    {form.show_packaging && (
+                      <div className="extras-subsection">
+                        <div className="extras-subsection-title">📦 Box &amp; Packaging</div>
+                        <div className="form-group" style={{ marginBottom: 10 }}>
+                          <label style={{ fontSize: 12, fontWeight: 600 }}>Packaging Type</label>
+                          <select
+                            value={form.packaging_mode}
+                            onChange={(e) => setForm({ ...form, packaging_mode: e.target.value })}
+                          >
+                            <option value="box">Standard Box</option>
+                            <option value="ice_box">Ice-Box (Custom Amount)</option>
+                          </select>
+                        </div>
+                        {form.packaging_mode === "ice_box" ? (
+                          <div className="field-row">
+                            <div className="form-group" style={{ marginBottom: 10 }}>
+                              <label style={{ fontSize: 12, fontWeight: 600 }}>Name / Type</label>
+                              <input placeholder="e.g. Ice-Box - Small"
+                                value={form.packaging_name}
+                                onChange={(e) => setForm({ ...form, packaging_name: e.target.value })} />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 10 }}>
+                              <label style={{ fontSize: 12, fontWeight: 600 }}>Amount (₹)</label>
+                              <input type="number" step="1" placeholder="0"
+                                value={form.packaging_amount} onChange={(e) => setForm({ ...form, packaging_amount: e.target.value })} />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="field-row">
+                            <div className="form-group" style={{ marginBottom: 10 }}>
+                              <label style={{ fontSize: 12, fontWeight: 600 }}>Number of Boxes</label>
+                              <input type="number" step="1" value={form.boxes} onChange={(e) => setForm({ ...form, boxes: e.target.value })} />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 10 }}>
+                              <label style={{ fontSize: 12, fontWeight: 600 }}>Rate per Box (₹)</label>
+                              <input type="number" step="1" value={form.box_rate} onChange={(e) => setForm({ ...form, box_rate: e.target.value })} />
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                          <div className="helper-hint info" style={{ margin: 0 }}>
+                            {form.packaging_mode === "ice_box"
+                              ? <>{form.packaging_name || "Ice-Box"} = <strong>₹{Number(form.packaging_amount) || 0}</strong></>
+                              : <>{Number(form.boxes) || 0} × ₹{Number(form.box_rate) || 0} = <strong>₹{(Number(form.boxes) || 0) * (Number(form.box_rate) || 0)}</strong></>}
+                          </div>
+                          <button type="button" className="btn btn-primary btn-sm" onClick={upsertPackagingEntry}>
+                            {form.packaging_edit_index !== null ? "Update Entry" : "+ Add Entry"}
+                          </button>
+                        </div>
+                        {form.packaging_entries.length > 0 && (
+                          <div className="entry-list">
+                            <div className="entry-list-header">Added ({form.packaging_entries.length})</div>
+                            {form.packaging_entries.map((entry, i) => {
+                              const amount = entry.kind === "ice_box"
+                                ? (Number(entry.amount) || 0)
+                                : (Number(entry.boxes) || 0) * (Number(entry.rate) || 0);
+                              return (
+                                <div key={i} className="entry-row">
+                                  <span className="entry-row-label">{entry.kind === "ice_box" ? `Ice-Box${entry.name ? ` · ${entry.name}` : ""}` : `${entry.boxes} box × ₹${entry.rate}`}</span>
+                                  <div className="entry-row-actions">
+                                    <span className="entry-row-amount">₹{amount}</span>
+                                    <button type="button" className="btn btn-sm btn-secondary"
+                                      onClick={() => setForm({
+                                        ...form,
+                                        packaging_mode: entry.kind || "box",
+                                        packaging_name: String(entry.name || ""),
+                                        packaging_amount: String(entry.amount || ""),
+                                        boxes: String(entry.boxes || "1"),
+                                        box_rate: String(entry.rate || "150"),
+                                        packaging_edit_index: i,
+                                      })}
+                                    >Edit</button>
+                                    <button type="button" className="btn btn-sm btn-danger"
+                                      onClick={() => setForm({
+                                        ...form,
+                                        packaging_entries: form.packaging_entries.filter((_, idx) => idx !== i),
+                                        packaging_edit_index: form.packaging_edit_index === i ? null : form.packaging_edit_index,
+                                      })}
+                                    >Delete</button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            <div className="entry-subtotal">
+                              Subtotal: ₹{form.packaging_entries.reduce((sum, entry) => sum + (
+                                entry.kind === "ice_box"
+                                  ? (Number(entry.amount) || 0)
+                                  : ((Number(entry.boxes) || 0) * (Number(entry.rate) || 0))
+                              ), 0).toLocaleString("en-IN")}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Delivery Charges sub-panel — mirror of Pickup */}
+                    {form.show_delivery && (
+                      <div className="extras-subsection">
+                        <div className="extras-subsection-title">🚛 Delivery Charges</div>
+                        <div className="field-row">
+                          <div className="form-group" style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 12, fontWeight: 600 }}>Rate per Delivery (₹)</label>
+                            <input type="number" value={form.delivery_rate} onChange={(e) => setForm({ ...form, delivery_rate: e.target.value })} />
+                          </div>
+                          <div className="form-group" style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 12, fontWeight: 600 }}>Select Person</label>
+                            <select value={form.delivery_selected_name}
+                              onChange={(e) => setForm({ ...form, delivery_selected_name: e.target.value })}>
+                              <option value="">Choose a person…</option>
+                              {deliveryRoster.map((name, i) => <option key={i} value={name}>{name}</option>)}
                             </select>
                           </div>
-                          {form.packaging_mode === "ice_box" ? (
-                            <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                              <div style={{ flex: 1 }}>
-                                <label style={{ fontSize: 11, color: "#555" }}>Name / Type</label>
-                                <input style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                                  placeholder="Ice-Box - Small"
-                                  value={form.packaging_name}
-                                  onChange={(e) => setForm({ ...form, packaging_name: e.target.value })} />
-                              </div>
-                              <div style={{ flex: 1 }}>
-                                <label style={{ fontSize: 11, color: "#555" }}>Amount (₹)</label>
-                                <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                                  value={form.packaging_amount} onChange={(e) => setForm({ ...form, packaging_amount: e.target.value })} />
-                              </div>
-                            </div>
-                          ) : (
-                            <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                              <div style={{ flex: 1 }}>
-                                <label style={{ fontSize: 11, color: "#555" }}>Boxes</label>
-                                <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                                  value={form.boxes} onChange={(e) => setForm({ ...form, boxes: e.target.value })} />
-                              </div>
-                              <div style={{ flex: 1 }}>
-                                <label style={{ fontSize: 11, color: "#555" }}>Rate per Box (₹)</label>
-                                <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                                  value={form.box_rate} onChange={(e) => setForm({ ...form, box_rate: e.target.value })} />
-                              </div>
-                            </div>
-                          )}
-                          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                            <button
-                              type="button"
-                              className="btn btn-sm"
-                              style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
-                              onClick={upsertPackagingEntry}
-                            >
-                              {form.packaging_edit_index !== null ? "Update Entry" : "Add Entry"}
-                            </button>
-                          </div>
-                          <div style={{ fontSize: 12, color: "#555" }}>
-                            {form.packaging_mode === "ice_box"
-                              ? <span>{form.packaging_name || "Ice-Box"} = <strong>₹{Number(form.packaging_amount) || 0}</strong></span>
-                              : <span>{Number(form.boxes) || 0} box × ₹{Number(form.box_rate) || 0} = <strong>₹{(Number(form.boxes) || 0) * (Number(form.box_rate) || 0)}</strong></span>}
-                          </div>
-                          {form.packaging_entries.length > 0 && (
-                            <div style={{ marginTop: 8 }}>
-                              <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({form.packaging_entries.length})</label>
-                              {form.packaging_entries.map((entry, i) => {
-                                const amount = entry.kind === "ice_box"
-                                  ? (Number(entry.amount) || 0)
-                                  : (Number(entry.boxes) || 0) * (Number(entry.rate) || 0);
-                                return (
-                                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", fontSize: 12, gap: 8 }}>
-                                    <span>{entry.kind === "ice_box" ? `Box & Packaging (Ice-Box${entry.name ? ` - ${entry.name}` : ""})` : `${entry.boxes} box × ₹${entry.rate}`}</span>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                      <span style={{ color: "#555" }}>₹{amount}</span>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm"
-                                        style={{ background: "#f3f4f6", color: "#111", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
-                                        onClick={() => setForm({
-                                          ...form,
-                                          packaging_mode: entry.kind || "box",
-                                          packaging_name: String(entry.name || ""),
-                                          packaging_amount: String(entry.amount || ""),
-                                          boxes: String(entry.boxes || "1"),
-                                          box_rate: String(entry.rate || "150"),
-                                          packaging_edit_index: i,
-                                        })}
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm"
-                                        style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
-                                        onClick={() => setForm({
-                                          ...form,
-                                          packaging_entries: form.packaging_entries.filter((_, idx) => idx !== i),
-                                          packaging_edit_index: form.packaging_edit_index === i ? null : form.packaging_edit_index,
-                                        })}
-                                      >
-                                        Delete
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                              <div style={{ borderTop: "1px solid #eee", marginTop: 4, paddingTop: 4, fontSize: 12, fontWeight: "bold" }}>
-                                Total: ₹{form.packaging_entries.reduce((sum, entry) => sum + (
-                                  entry.kind === "ice_box"
-                                    ? (Number(entry.amount) || 0)
-                                    : ((Number(entry.boxes) || 0) * (Number(entry.rate) || 0))
-                                ), 0)}
-                              </div>
-                            </div>
-                          )}
                         </div>
-                      )}
-                    </div>
-
-                    {/* --- ODA Pickup --- */}
-                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #eee" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <strong style={{ fontSize: 13 }}>ODA Pickup Location</strong>
-                        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                          <input type="checkbox" checked={form.show_oda}
-                            onChange={(e) => setForm({ ...form, show_oda: e.target.checked })} /> Enable
-                        </label>
-                      </div>
-                      {form.show_oda && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div>
-                            <label style={{ fontSize: 11, color: "#555" }}>Location</label>
-                            <input style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value={form.oda_location} onChange={(e) => setForm({ ...form, oda_location: e.target.value })} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: 11, color: "#555" }}>Person Name</label>
-                            <input style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value={form.oda_person} onChange={(e) => setForm({ ...form, oda_person: e.target.value })} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: 11, color: "#555" }}>Amount (₹)</label>
-                            <input type="number" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value={form.oda_amount} onChange={(e) => setForm({ ...form, oda_amount: e.target.value })} />
-                          </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                          <button type="button" className="btn btn-primary btn-sm" onClick={upsertDeliveryEntry}>
+                            {form.delivery_edit_index !== null ? "Update Entry" : "+ Add Entry"}
+                          </button>
                         </div>
-                      )}
-                    </div>
-
-                    {/* --- Pickup Charges --- */}
-                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #eee" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <strong style={{ fontSize: 13 }}>Pickup Charges</strong>
-                        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                          <input type="checkbox" checked={form.show_pickup}
-                            onChange={(e) => setForm({ ...form, show_pickup: e.target.checked })} /> Enable
-                        </label>
-                      </div>
-                      {form.show_pickup && (
-                        <div>
-                          <div style={{ marginBottom: 8 }}>
-                            <label style={{ fontSize: 11, color: "#555" }}>Rate per Pickup (₹)</label>
-                            <input type="number" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value={form.pickup_rate} onChange={(e) => setForm({ ...form, pickup_rate: e.target.value })} />
+                        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                          <input style={{ flex: 1 }}
+                            placeholder="Add new person to saved list"
+                            value={form.delivery_new_name}
+                            onChange={(e) => setForm({ ...form, delivery_new_name: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && form.delivery_new_name.trim()) {
+                                e.preventDefault();
+                                const updated = [...deliveryRoster, form.delivery_new_name.trim()];
+                                setDeliveryRoster(updated);
+                                localStorage.setItem("delivery_roster", JSON.stringify(updated));
+                                setForm({ ...form, delivery_new_name: "" });
+                              }
+                            }} />
+                          <button type="button" className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                              if (form.delivery_new_name.trim()) {
+                                const updated = [...deliveryRoster, form.delivery_new_name.trim()];
+                                setDeliveryRoster(updated);
+                                localStorage.setItem("delivery_roster", JSON.stringify(updated));
+                                setForm({ ...form, delivery_new_name: "" });
+                              }
+                            }}>+ Save Name</button>
+                        </div>
+                        {form.delivery_entries.length > 0 && (
+                          <div className="entry-list">
+                            <div className="entry-list-header">Added ({form.delivery_entries.length})</div>
+                            {form.delivery_entries.map((entry, i) => (
+                              <div key={i} className="entry-row">
+                                <span className="entry-row-label">Delivery · <strong>{entry.name}</strong></span>
+                                <div className="entry-row-actions">
+                                  <span className="entry-row-amount">₹{Number(entry.rate) || 0}</span>
+                                  <button type="button" className="btn btn-sm btn-secondary"
+                                    onClick={() => setForm({
+                                      ...form,
+                                      delivery_selected_name: entry.name,
+                                      delivery_rate: String(entry.rate || "600"),
+                                      delivery_edit_index: i,
+                                    })}>Edit</button>
+                                  <button type="button" className="btn btn-sm btn-danger"
+                                    onClick={() => setForm({
+                                      ...form,
+                                      delivery_entries: form.delivery_entries.filter((_, idx) => idx !== i),
+                                      delivery_edit_index: form.delivery_edit_index === i ? null : form.delivery_edit_index,
+                                    })}>Delete</button>
+                                </div>
+                              </div>
+                            ))}
+                            <div className="entry-subtotal">
+                              Subtotal: ₹{form.delivery_entries.reduce((sum, entry) => sum + (Number(entry.rate) || 0), 0).toLocaleString("en-IN")}
+                            </div>
                           </div>
-                          <div style={{ marginBottom: 8 }}>
-                            <label style={{ fontSize: 11, color: "#555" }}>Select Person</label>
-                            <select style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value={form.pickup_selected_name}
+                        )}
+                      </div>
+                    )}
+
+                    {/* Pickup Charges sub-panel */}
+                    {form.show_pickup && (
+                      <div className="extras-subsection">
+                        <div className="extras-subsection-title">🚚 Pickup Charges</div>
+                        <div className="field-row">
+                          <div className="form-group" style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 12, fontWeight: 600 }}>Rate per Pickup (₹)</label>
+                            <input type="number" value={form.pickup_rate} onChange={(e) => setForm({ ...form, pickup_rate: e.target.value })} />
+                          </div>
+                          <div className="form-group" style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 12, fontWeight: 600 }}>Select Person</label>
+                            <select value={form.pickup_selected_name}
                               onChange={(e) => setForm({ ...form, pickup_selected_name: e.target.value })}>
-                              <option value="">-- Select name to add --</option>
+                              <option value="">Choose a person…</option>
                               {pickupRoster.map((name, i) => <option key={i} value={name}>{name}</option>)}
                             </select>
                           </div>
-                          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                            <button
-                              type="button"
-                              className="btn btn-sm"
-                              style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
-                              onClick={upsertPickupEntry}
-                            >
-                              {form.pickup_edit_index !== null ? "Update Entry" : "Add Entry"}
-                            </button>
-                          </div>
-                          <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-                            <input style={{ flex: 1, padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}
-                              placeholder="Add new name to list"
-                              value={form.pickup_new_name}
-                              onChange={(e) => setForm({ ...form, pickup_new_name: e.target.value })}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" && form.pickup_new_name.trim()) {
-                                  e.preventDefault();
-                                  const updated = [...pickupRoster, form.pickup_new_name.trim()];
-                                  setPickupRoster(updated);
-                                  localStorage.setItem("pickup_roster", JSON.stringify(updated));
-                                  setForm({ ...form, pickup_new_name: "" });
-                                }
-                              }} />
-                            <button type="button" className="btn btn-sm" style={{ background: "#444", color: "#fff", padding: "4px 10px", borderRadius: 6, fontSize: 11 }}
-                              onClick={() => {
-                                if (form.pickup_new_name.trim()) {
-                                  const updated = [...pickupRoster, form.pickup_new_name.trim()];
-                                  setPickupRoster(updated);
-                                  localStorage.setItem("pickup_roster", JSON.stringify(updated));
-                                  setForm({ ...form, pickup_new_name: "" });
-                                }
-                              }}>+ Name</button>
-                          </div>
-                          {form.pickup_entries.length > 0 && (
-                            <div style={{ marginBottom: 4 }}>
-                              <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({form.pickup_entries.length})</label>
-                              {form.pickup_entries.map((entry, i) => (
-                                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12 }}>
-                                  <span>Pickup Charges (<strong>{entry.name}</strong>)</span>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ color: "#555" }}>₹{Number(entry.rate) || 0}</span>
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm"
-                                      style={{ background: "#f3f4f6", color: "#111", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
-                                      onClick={() => setForm({
-                                        ...form,
-                                        pickup_selected_name: entry.name,
-                                        pickup_rate: String(entry.rate || "600"),
-                                        pickup_edit_index: i,
-                                      })}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm"
-                                      style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
-                                      onClick={() => setForm({
-                                        ...form,
-                                        pickup_entries: form.pickup_entries.filter((_, idx) => idx !== i),
-                                        pickup_edit_index: form.pickup_edit_index === i ? null : form.pickup_edit_index,
-                                      })}
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                              <div style={{ borderTop: "1px solid #eee", marginTop: 4, paddingTop: 4, fontSize: 12, fontWeight: "bold" }}>
-                                Total: ₹{form.pickup_entries.reduce((sum, entry) => sum + (Number(entry.rate) || 0), 0)}
-                              </div>
-                            </div>
-                          )}
                         </div>
-                      )}
-                    </div>
-
-                    {/* --- Other Charges --- */}
-                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #eee" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <strong style={{ fontSize: 13 }}>Other Charges</strong>
-                        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                          <input type="checkbox" checked={form.show_other}
-                            onChange={(e) => setForm({ ...form, show_other: e.target.checked })} /> Enable
-                        </label>
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                          <button type="button" className="btn btn-primary btn-sm" onClick={upsertPickupEntry}>
+                            {form.pickup_edit_index !== null ? "Update Entry" : "+ Add Entry"}
+                          </button>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                          <input style={{ flex: 1 }}
+                            placeholder="Add new person to saved list"
+                            value={form.pickup_new_name}
+                            onChange={(e) => setForm({ ...form, pickup_new_name: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && form.pickup_new_name.trim()) {
+                                e.preventDefault();
+                                const updated = [...pickupRoster, form.pickup_new_name.trim()];
+                                setPickupRoster(updated);
+                                localStorage.setItem("pickup_roster", JSON.stringify(updated));
+                                setForm({ ...form, pickup_new_name: "" });
+                              }
+                            }} />
+                          <button type="button" className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                              if (form.pickup_new_name.trim()) {
+                                const updated = [...pickupRoster, form.pickup_new_name.trim()];
+                                setPickupRoster(updated);
+                                localStorage.setItem("pickup_roster", JSON.stringify(updated));
+                                setForm({ ...form, pickup_new_name: "" });
+                              }
+                            }}>+ Save Name</button>
+                        </div>
+                        {form.pickup_entries.length > 0 && (
+                          <div className="entry-list">
+                            <div className="entry-list-header">Added ({form.pickup_entries.length})</div>
+                            {form.pickup_entries.map((entry, i) => (
+                              <div key={i} className="entry-row">
+                                <span className="entry-row-label">Pickup · <strong>{entry.name}</strong></span>
+                                <div className="entry-row-actions">
+                                  <span className="entry-row-amount">₹{Number(entry.rate) || 0}</span>
+                                  <button type="button" className="btn btn-sm btn-secondary"
+                                    onClick={() => setForm({
+                                      ...form,
+                                      pickup_selected_name: entry.name,
+                                      pickup_rate: String(entry.rate || "600"),
+                                      pickup_edit_index: i,
+                                    })}>Edit</button>
+                                  <button type="button" className="btn btn-sm btn-danger"
+                                    onClick={() => setForm({
+                                      ...form,
+                                      pickup_entries: form.pickup_entries.filter((_, idx) => idx !== i),
+                                      pickup_edit_index: form.pickup_edit_index === i ? null : form.pickup_edit_index,
+                                    })}>Delete</button>
+                                </div>
+                              </div>
+                            ))}
+                            <div className="entry-subtotal">
+                              Subtotal: ₹{form.pickup_entries.reduce((sum, entry) => sum + (Number(entry.rate) || 0), 0).toLocaleString("en-IN")}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      {form.show_other && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div>
-                            <label style={{ fontSize: 11, color: "#555" }}>Description</label>
-                            <input style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              placeholder="Enter description"
+                    )}
+
+                    {/* Other Charges sub-panel */}
+                    {form.show_other && (
+                      <div className="extras-subsection">
+                        <div className="extras-subsection-title">💰 Other Charges</div>
+                        <div className="field-row">
+                          <div className="form-group" style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 12, fontWeight: 600 }}>Description</label>
+                            <input placeholder="What's this charge for?"
                               value={form.other_desc} onChange={(e) => setForm({ ...form, other_desc: e.target.value })} />
                           </div>
-                          <div>
-                            <label style={{ fontSize: 11, color: "#555" }}>Amount (₹)</label>
-                            <input type="number" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
-                              value={form.other_amount} onChange={(e) => setForm({ ...form, other_amount: e.target.value })} />
+                          <div className="form-group" style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 12, fontWeight: 600 }}>Amount (₹)</label>
+                            <input type="number" value={form.other_amount} onChange={(e) => setForm({ ...form, other_amount: e.target.value })} />
                           </div>
-                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                            <button
-                              type="button"
-                              className="btn btn-sm"
-                              style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
-                              onClick={upsertOtherEntry}
-                            >
-                              {form.other_edit_index !== null ? "Update Entry" : "Add Entry"}
-                            </button>
-                          </div>
-                          {form.other_entries.length > 0 && (
-                            <div style={{ marginBottom: 4 }}>
-                              <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({form.other_entries.length})</label>
-                              {form.other_entries.map((entry, i) => (
-                                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12, gap: 8 }}>
-                                  <span>{entry.description}</span>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ color: "#555" }}>₹{Number(entry.amount) || 0}</span>
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm"
-                                      style={{ background: "#f3f4f6", color: "#111", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
-                                      onClick={() => setForm({
-                                        ...form,
-                                        other_desc: entry.description,
-                                        other_amount: String(entry.amount || ""),
-                                        other_edit_index: i,
-                                      })}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm"
-                                      style={{ background: "#fee2e2", color: "#b91c1c", padding: "2px 8px", borderRadius: 6, fontSize: 11 }}
-                                      onClick={() => setForm({
-                                        ...form,
-                                        other_entries: form.other_entries.filter((_, idx) => idx !== i),
-                                        other_edit_index: form.other_edit_index === i ? null : form.other_edit_index,
-                                      })}
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                              <div style={{ borderTop: "1px solid #eee", marginTop: 4, paddingTop: 4, fontSize: 12, fontWeight: "bold" }}>
-                                Total: ₹{form.other_entries.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)}
-                              </div>
-                            </div>
-                          )}
                         </div>
-                      )}
-                    </div>
-
-                    {/* --- Done --- */}
-                    <div style={{ padding: "10px 16px" }}>
-                      <button type="button" className="btn btn-sm" style={{ width: "100%", background: "#4361ee", color: "#fff", padding: "8px", borderRadius: 6, fontSize: 13 }}
-                        onClick={() => setForm({ ...form, showExtrasDropdown: false })}>Done</button>
-                    </div>
-                  </div>
-                )}
-                {/* Summary of enabled extras */}
-                {(form.show_packaging || form.show_oda || form.show_pickup || form.show_other) && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "#555", lineHeight: 1.8 }}>
-                    {form.show_packaging && form.packaging_entries.map((entry, i) => (
-                      <div key={`packaging-${i}`}>
-                        {entry.kind === "ice_box"
-                          ? <>Box & Packaging (Ice-Box{entry.name ? ` - ${entry.name}` : ""}): <strong>₹{(Number(entry.amount) || 0).toLocaleString()}</strong></>
-                          : <>Box & Packaging ({entry.boxes} box): <strong>₹{((Number(entry.boxes) || 0) * (Number(entry.rate) || 0)).toLocaleString()}</strong></>}
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+                          <button type="button" className="btn btn-primary btn-sm" onClick={upsertOtherEntry}>
+                            {form.other_edit_index !== null ? "Update Entry" : "+ Add Entry"}
+                          </button>
+                        </div>
+                        {form.other_entries.length > 0 && (
+                          <div className="entry-list">
+                            <div className="entry-list-header">Added ({form.other_entries.length})</div>
+                            {form.other_entries.map((entry, i) => (
+                              <div key={i} className="entry-row">
+                                <span className="entry-row-label">{entry.description}</span>
+                                <div className="entry-row-actions">
+                                  <span className="entry-row-amount">₹{Number(entry.amount) || 0}</span>
+                                  <button type="button" className="btn btn-sm btn-secondary"
+                                    onClick={() => setForm({
+                                      ...form,
+                                      other_desc: entry.description,
+                                      other_amount: String(entry.amount || ""),
+                                      other_edit_index: i,
+                                    })}>Edit</button>
+                                  <button type="button" className="btn btn-sm btn-danger"
+                                    onClick={() => setForm({
+                                      ...form,
+                                      other_entries: form.other_entries.filter((_, idx) => idx !== i),
+                                      other_edit_index: form.other_edit_index === i ? null : form.other_edit_index,
+                                    })}>Delete</button>
+                                </div>
+                              </div>
+                            ))}
+                            <div className="entry-subtotal">
+                              Subtotal: ₹{form.other_entries.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0).toLocaleString("en-IN")}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    ))}
-                    {form.show_oda && <div>{form.oda_person} (ODA-Pickup): <strong>₹{Number(form.oda_amount) || 0}</strong></div>}
-                    {form.show_pickup && form.pickup_entries.map((entry, i) => <div key={i}>Pickup ({entry.name}): <strong>₹{Number(entry.rate) || 0}</strong></div>)}
-                    {form.show_other && form.other_entries.map((entry, i) => <div key={i}>{entry.description}: <strong>₹{Number(entry.amount) || 0}</strong></div>)}
-                    <div style={{ fontWeight: 600, borderTop: "1px solid #eee", paddingTop: 4, marginTop: 4 }}>
-                      Total Extra: ₹{getExtraChargeItems(form).reduce((s, ec) => s + ec.amount, 0).toLocaleString()}
+                    )}
+                  </div>
+                </div>
+
+                {/* STEP 6 — PAYMENT STATUS */}
+                <div className="step-card">
+                  <div className="step-card-header">
+                    <div className="step-badge">6</div>
+                    <div className="step-card-title">
+                      <h3>Payment Status</h3>
+                      <p>Mark whether payment has been received for this bill.</p>
                     </div>
                   </div>
-                )}
+                  <div className="step-card-body">
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>Status</label>
+                      <select value={form.payment_status} onChange={(e) => setForm({ ...form, payment_status: e.target.value })}>
+                        <option value="NOTPAID">Not Paid</option>
+                        <option value="PAID">Paid</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="form-group">
-                <label>Payment Status</label>
-                <select value={form.payment_status} onChange={(e) => setForm({ ...form, payment_status: e.target.value })}>
-                  <option value="PAID">PAID</option>
-                  <option value="NOTPAID">NOTPAID</option>
-                </select>
-              </div>
-              <div className="form-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">{editing ? "Update" : "Add"}</button>
+
+              {/* STICKY FOOTER — GRAND TOTAL + ACTIONS */}
+              <div className="friendly-modal-footer">
+                <div className="footer-summary">
+                  <span className="label">Grand Total{extrasActive && extrasCount > 0 ? ` (incl. ${extrasCount} extra${extrasCount > 1 ? "s" : ""})` : ""}</span>
+                  <span className="value">₹{grandTotal.toLocaleString("en-IN")}</span>
+                </div>
+                <div className="form-actions" style={{ marginTop: 0 }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary">{editing ? "Save Changes" : "Create Billing"}</button>
+                </div>
               </div>
             </form>
           </div>
         </div>
-      )}
+        );
+      })()}
       {showPartyModal && (
         <div className="modal-overlay" onClick={closePartyManager}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
