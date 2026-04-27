@@ -85,6 +85,8 @@ const emptyForm = {
   other_amount: "",
   other_entries: [],
   other_edit_index: null,
+  show_remark: false,
+  remark: "",
   showExtrasDropdown: false,
   payment_status: "NOTPAID",
 };
@@ -1099,6 +1101,8 @@ export default function Billing() {
       other_entries: submitData.other_entries,
       other_desc: submitData.other_desc,
       other_amount: submitData.other_amount,
+      show_remark: submitData.show_remark,
+      remark: submitData.remark,
     });
 
     if (editing) {
@@ -1215,6 +1219,8 @@ export default function Billing() {
       other_amount: legacyFields.other_amount,
       other_entries: otherEntries,
       other_edit_index: null,
+      show_remark: b.show_remark || Boolean(b.remark),
+      remark: b.remark || "",
       showExtrasDropdown: false,
       payment_status: b.payment_status || "NOTPAID",
     });
@@ -1654,6 +1660,8 @@ export default function Billing() {
       other_desc: b.other_desc || "",
       other_amount: String(b.other_amount || ""),
       other_entries: normalizeOtherEntries(b),
+      show_remark: b.show_remark || Boolean(b.remark),
+      remark: b.remark || "",
     };
 
     localStorage.setItem("open_invoice", JSON.stringify(invoiceData));
@@ -2287,6 +2295,12 @@ export default function Billing() {
                         <input type="checkbox" checked={form.show_other}
                           onChange={(e) => setForm({ ...form, show_other: e.target.checked })} />
                       </label>
+                      <label className={`extras-toggle-pill ${form.show_remark ? "active" : ""}`}>
+                        <span className="pill-icon">📝</span>
+                        <span>Remark / Note</span>
+                        <input type="checkbox" checked={form.show_remark}
+                          onChange={(e) => setForm({ ...form, show_remark: e.target.checked })} />
+                      </label>
                     </div>
 
                     {/* Box & Packaging sub-panel */}
@@ -2592,6 +2606,23 @@ export default function Billing() {
                             </div>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* Remark / Note sub-panel — text-only, no amount, prints in invoice */}
+                    {form.show_remark && (
+                      <div className="extras-subsection">
+                        <div className="extras-subsection-title">📝 Remark / Note</div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label style={{ fontSize: 12, fontWeight: 600 }}>This text will appear in the invoice PDF as a description-only row (no amount).</label>
+                          <textarea
+                            rows={3}
+                            placeholder="e.g. Payment due within 15 days. Cheques in favour of Swati Tours & Transport."
+                            value={form.remark}
+                            onChange={(e) => setForm({ ...form, remark: e.target.value })}
+                            style={{ resize: "vertical", minHeight: 70 }}
+                          />
+                        </div>
                       </div>
                     )}
                   </div>

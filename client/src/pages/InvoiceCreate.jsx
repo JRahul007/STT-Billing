@@ -229,6 +229,9 @@ export default function InvoiceCreate() {
     other_amount: "",
     other_entries: [],
     other_edit_index: null,
+    // Remark / Note — text-only line shown in invoice description column (no amount)
+    show_remark: false,
+    remark: "",
     // Editable header & footer fields
     company_name: "SWATI TOURS & TRANSPORT",
     company_address: "A-902, DREAM CARNIVAL, NEAR PNG JEWELLERS, CHAROLI, PUNE-412105",
@@ -521,6 +524,8 @@ export default function InvoiceCreate() {
       other_desc: legacyFields.other_desc,
       other_amount: legacyFields.other_amount,
       other_entries: otherEntries,
+      show_remark: inv.show_remark || Boolean(inv.remark),
+      remark: inv.remark || "",
       payment_status: prev.payment_status || "NOTPAID",
       invoice_data: JSON.stringify({ ...inv, stamp_image: stampImg }),
     };
@@ -1012,6 +1017,29 @@ export default function InvoiceCreate() {
                   )}
                 </div>
 
+                {/* --- Remark / Note (text-only line shown in invoice description) --- */}
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #eee" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <strong style={{ fontSize: 13 }}>Remark / Note</strong>
+                    <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!inv.show_remark}
+                        onChange={(e) => setInv({ ...inv, show_remark: e.target.checked })} /> Enable
+                    </label>
+                  </div>
+                  {inv.show_remark && (
+                    <div>
+                      <label style={{ fontSize: 11, color: "#555" }}>Shows in invoice PDF as a description-only row (no amount).</label>
+                      <textarea
+                        rows={3}
+                        placeholder="e.g. Payment due within 15 days. Cheques in favour of Swati Tours & Transport."
+                        style={{ width: "100%", padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 4, resize: "vertical", fontFamily: "inherit" }}
+                        value={inv.remark || ""}
+                        onChange={(e) => setInv({ ...inv, remark: e.target.value })}
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* --- Done --- */}
                 <div style={{ padding: "10px 16px" }}>
                   <button className="btn btn-sm" style={{ width: "100%", background: "#4361ee", color: "#fff", padding: "8px", borderRadius: 6, fontSize: 13 }}
@@ -1367,6 +1395,22 @@ export default function InvoiceCreate() {
                 </td>
               </tr>
             ))}
+
+            {/* --- REMARK / NOTE ROW (optional, description only — no amount) --- */}
+            {inv.show_remark && (inv.remark || "").trim() && (
+              <tr>
+                <td colSpan={inv.is_monthly ? 5 : 1} style={{ padding: "8px 10px", verticalAlign: "top" }}>
+                  <div style={{ fontSize: 11, fontWeight: "bold", color: "#444", marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Remark
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "#222", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                    {inv.remark}
+                  </div>
+                </td>
+                {!inv.is_monthly && (<><td></td><td></td><td></td><td></td></>)}
+                <td style={{ textAlign: "center", verticalAlign: "middle" }}></td>
+              </tr>
+            )}
 
             {/* --- SPACER --- */}
             {inv.is_monthly ? (
