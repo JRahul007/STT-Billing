@@ -3,6 +3,25 @@
 // company stamp shows in production on any browser/device — no per-device
 // upload required. Falls back to an inline SVG if the file is missing.
 
+// Bump this string whenever the public/stamp_image.png file is replaced.
+// On the next page load every device will:
+//   (1) drop any stale base64 stamp it had cached in localStorage, and
+//   (2) re-fetch /stamp_image.png with a cache-busting query string.
+// This is the one knob to turn when the company stamp changes.
+export const STAMP_VERSION = "2026-04-27";
+const STAMP_VERSION_KEY = "stamp_image_version";
+
+// One-time migration on module init — runs before any page reads localStorage.stamp_image,
+// so a stale stamp from a previous "Upload Stamp" action is wiped before it can win.
+if (typeof window !== "undefined") {
+  try {
+    if (localStorage.getItem(STAMP_VERSION_KEY) !== STAMP_VERSION) {
+      localStorage.removeItem("stamp_image");
+      localStorage.setItem(STAMP_VERSION_KEY, STAMP_VERSION);
+    }
+  } catch { /* storage may be unavailable in private mode — ignore */ }
+}
+
 const svgFallback = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120">
   <rect x="2" y="2" width="236" height="116" rx="12" fill="none" stroke="#b71c1c" stroke-width="3"/>
   <rect x="8" y="8" width="224" height="104" rx="9" fill="none" stroke="#b71c1c" stroke-width="1.5" stroke-dasharray="6 3"/>
@@ -23,7 +42,9 @@ export async function getDefaultStamp() {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      const res = await fetch("/stamp_image.png", { cache: "force-cache" });
+      // ?v=STAMP_VERSION cache-busts the URL so any previously-cached PNG
+      // from older deploys is bypassed and the new file is fetched fresh.
+      const res = await fetch(`/stamp_image.png?v=${STAMP_VERSION}`, { cache: "no-cache" });
       if (!res.ok) throw new Error("stamp fetch failed");
       const blob = await res.blob();
       const dataUrl = await new Promise((resolve, reject) => {

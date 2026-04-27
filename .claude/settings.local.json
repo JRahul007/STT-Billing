@@ -21,7 +21,8 @@
       "Bash(node -e ' *)",
       "Bash(git -C \"d:/invoice_maker\" status --short)",
       "Bash(git -C \"d:/invoice_maker\" log --oneline -5)",
-      "Bash(git -C \"d:/invoice_maker\" show --stat HEAD)"
+      "Bash(git -C \"d:/invoice_maker\" show --stat HEAD)",
+      "Bash(cat \"C:\\\\\\\\Users\\\\\\\\RAHUL~1.JUN\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\d--invoice-maker\\\\\\\\0bb66d0b-4e3c-4b5d-835b-41f808f427cb\\\\\\\\tasks\\\\\\\\btem7f7l1.output\")"
     ]
   }
 }

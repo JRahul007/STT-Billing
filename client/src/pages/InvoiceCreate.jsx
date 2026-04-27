@@ -260,12 +260,11 @@ export default function InvoiceCreate() {
       if (saved) {
         try {
           const data = JSON.parse(saved);
-          // Restore stamp from saved invoice if available
-          if (data.stamp_image) {
-            setStampImg(data.stamp_image);
-            localStorage.setItem("stamp_image", data.stamp_image);
-            delete data.stamp_image;
-          }
+          // Ignore any stamp baked into a previously-saved invoice — old bills carry the
+          // old stamp inside their JSON, and we don't want them to overwrite localStorage
+          // (or the screen) with the outdated image. The current stamp loaded above by
+          // getDefaultStamp() / localStorage stays in effect.
+          if (data.stamp_image) delete data.stamp_image;
           setInv((prev) => ({
             ...prev,
             ...data,
