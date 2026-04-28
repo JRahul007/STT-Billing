@@ -5,7 +5,10 @@ import { jsPDF } from "jspdf";
 import { getDefaultStamp } from "../defaultStamp";
 
 const STORAGE_KEY = "vehicle_entries";
+const CLIENTS_STORAGE_KEY = "vehicle_clients";
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const emptyClientForm = { id: null, name: "", contact: "", address: "" };
 
 const numberToWords = (num) => {
   if (num === 0) return "Zero";
@@ -62,6 +65,11 @@ export default function Vehicle() {
   const [filterYear, setFilterYear] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
 
+  // --- Vehicle clients master (separate from vehicle entries) ---
+  const [clients, setClients] = useState([]);
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [clientForm, setClientForm] = useState(emptyClientForm);
+
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -69,11 +77,82 @@ export default function Vehicle() {
     } catch {
       setEntries([]);
     }
+    try {
+      const savedClients = JSON.parse(localStorage.getItem(CLIENTS_STORAGE_KEY) || "[]");
+      setClients(Array.isArray(savedClients) ? savedClients : []);
+    } catch {
+      setClients([]);
+    }
   }, []);
 
   const saveAll = (list) => {
     setEntries(list);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  };
+
+  const saveClients = (list) => {
+    setClients(list);
+    localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(list));
+  };
+
+  // Look up a client record by its name (case-insensitive). Used to enrich the PDF
+  // with contact + address when available.
+  const findClient = (name) => {
+    if (!name) return null;
+    const target = String(name).trim().toLowerCase();
+    return clients.find((c) => (c.name || "").trim().toLowerCase() === target) || null;
+  };
+
+  const openClientManager = () => {
+    setClientForm(emptyClientForm);
+    setShowClientModal(true);
+  };
+
+  const handleClientSubmit = (e) => {
+    e.preventDefault();
+    const name = (clientForm.name || "").trim();
+    if (!name) {
+      alert("Client name is required.");
+      return;
+    }
+    // Prevent duplicate names (case-insensitive) when adding a new client
+    const dupe = clients.find((c) =>
+      (c.name || "").trim().toLowerCase() === name.toLowerCase() && c.id !== clientForm.id
+    );
+    if (dupe) {
+      alert("A client with this name already exists.");
+      return;
+    }
+    if (clientForm.id) {
+      const updated = clients.map((c) => (c.id === clientForm.id
+        ? { ...c, name, contact: clientForm.contact || "", address: clientForm.address || "" }
+        : c));
+      saveClients(updated);
+    } else {
+      const newClient = {
+        id: Date.now(),
+        name,
+        contact: clientForm.contact || "",
+        address: clientForm.address || "",
+      };
+      saveClients([newClient, ...clients]);
+    }
+    setClientForm(emptyClientForm);
+  };
+
+  const handleClientEdit = (client) => {
+    setClientForm({
+      id: client.id,
+      name: client.name || "",
+      contact: client.contact || "",
+      address: client.address || "",
+    });
+  };
+
+  const handleClientDelete = (id) => {
+    if (!window.confirm("Delete this client? Existing vehicle entries that used this client will keep the name on file.")) return;
+    saveClients(clients.filter((c) => c.id !== id));
+    if (clientForm.id === id) setClientForm(emptyClientForm);
   };
 
   const handleChange = (field, value) => {
@@ -131,6 +210,9 @@ export default function Vehicle() {
     const totalAmt = Number(en.amount) || 0;
     const amtWords = totalAmt > 0 ? numberToWords(Math.floor(totalAmt)) + " Rupees Only" : "";
     const stampBase64 = localStorage.getItem("stamp_image") || await getDefaultStamp();
+    // Look up the client master record so the invoice can show contact + address
+    // under the company name when available. Falls back to just the name otherwise.
+    const clientRecord = findClient(en.client_name);
 
     let barcodeDataUrl = "";
     try {
@@ -177,8 +259,10 @@ export default function Vehicle() {
         <td style="${lbl} text-align:center;">Date</td>
       </tr>
       <tr>
-        <td style="${cell} padding:12px 10px; line-height:1.7;">
+        <td style="${cell} padding:12px 10px; line-height:1.6;">
           <strong style="font-size:14px; text-transform:uppercase;">M/s ${en.client_name || "-"}</strong>
+          ${clientRecord && clientRecord.address ? `<div style="font-size:11.5px; color:#222; margin-top:3px; line-height:1.45;">${clientRecord.address}</div>` : ""}
+          ${clientRecord && clientRecord.contact ? `<div style="font-size:11.5px; color:#222; margin-top:2px;">Contact: ${clientRecord.contact}</div>` : ""}
         </td>
         <td style="${cell} text-align:center; vertical-align:middle; padding:6px 4px;">
           ${barcodeDataUrl ? `<img src="${barcodeDataUrl}" style="max-width:100%; height:auto;" />` : ""}
@@ -511,11 +595,46 @@ export default function Vehicle() {
                     style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 4 }}>Client Name</label>
-                  <input value={form.client_name}
-                    onChange={(e) => handleChange("client_name", e.target.value)}
-                    placeholder="e.g. XYZ PVT LTD"
-                    style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }} />
+                  <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 4 }}>
+                    <span>Client Name</span>
+                    <button type="button" className="btn btn-sm btn-secondary"
+                      style={{ padding: "2px 10px", fontSize: 11, borderRadius: 6 }}
+                      onClick={openClientManager}>+ Manage Clients</button>
+                  </label>
+                  {(() => {
+                    // Build the dropdown list: master clients first, then legacy names from past
+                    // entries that aren't yet in the master (so older data still shows correctly).
+                    const masterNames = new Set(clients.map((c) => (c.name || "").trim()).filter(Boolean));
+                    const legacy = entries
+                      .map((en) => (en.client_name || "").trim())
+                      .filter((n) => n && !masterNames.has(n));
+                    const allNames = [
+                      ...clients.map((c) => ({ name: c.name, source: "master" })),
+                      ...Array.from(new Set(legacy)).map((name) => ({ name, source: "legacy" })),
+                    ];
+                    return (
+                      <select value={form.client_name}
+                        onChange={(e) => handleChange("client_name", e.target.value)}
+                        style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}>
+                        <option value="">-- Select Client --</option>
+                        {allNames.map((opt) => (
+                          <option key={`${opt.source}-${opt.name}`} value={opt.name}>
+                            {opt.name}{opt.source === "legacy" ? " (not in master)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    );
+                  })()}
+                  {form.client_name && (() => {
+                    const c = findClient(form.client_name);
+                    return c ? (
+                      <div style={{ marginTop: 6, fontSize: 11, color: "#555", lineHeight: 1.5 }}>
+                        {c.contact && <span>📞 {c.contact}</span>}
+                        {c.contact && c.address && <span> · </span>}
+                        {c.address && <span>{c.address}</span>}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 4 }}>Description</label>
@@ -580,6 +699,122 @@ export default function Vehicle() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Manage Clients modal — full CRUD master list.
+          z-index 1100 sits above the Add Vehicle Entry modal (which is inline-styled
+          at z-index 1000), so it stacks correctly when opened from inside that modal. */}
+      {showClientModal && (
+        <div className="modal-overlay"
+          style={{ zIndex: 1100 }}
+          onClick={() => { setShowClientModal(false); setClientForm(emptyClientForm); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560, width: "92vw" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Manage Clients</h2>
+                <p style={{ marginTop: 4, fontSize: 12.5, color: "#64748b" }}>
+                  Add, edit, or remove vehicle clients. Only the client name is required.
+                </p>
+              </div>
+              <button type="button" className="btn btn-sm btn-secondary"
+                style={{ padding: "4px 10px", fontSize: 11, borderRadius: 6 }}
+                onClick={() => { setShowClientModal(false); setClientForm(emptyClientForm); }}>
+                Close
+              </button>
+            </div>
+
+            {/* Add / Edit form */}
+            <form onSubmit={handleClientSubmit} style={{ background: "#f8faff", border: "1px solid #dbe3f3", borderRadius: 10, padding: 14, marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>
+                {clientForm.id ? "Edit Client" : "Add New Client"}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#334155", display: "block", marginBottom: 4 }}>
+                    Client Name <span style={{ color: "#dc2626" }}>*</span>
+                  </label>
+                  <input
+                    required
+                    placeholder="e.g. XYZ PVT LTD"
+                    value={clientForm.name}
+                    onChange={(e) => setClientForm((p) => ({ ...p, name: e.target.value }))}
+                    style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#334155", display: "block", marginBottom: 4 }}>
+                    Contact Number <span style={{ color: "#94a3b8", fontWeight: 500 }}>(optional)</span>
+                  </label>
+                  <input
+                    placeholder="e.g. +91 9876543210"
+                    value={clientForm.contact}
+                    onChange={(e) => setClientForm((p) => ({ ...p, contact: e.target.value }))}
+                    style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#334155", display: "block", marginBottom: 4 }}>
+                    Address <span style={{ color: "#94a3b8", fontWeight: 500 }}>(optional)</span>
+                  </label>
+                  <input
+                    placeholder="Office / billing address"
+                    value={clientForm.address}
+                    onChange={(e) => setClientForm((p) => ({ ...p, address: e.target.value }))}
+                    style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                {clientForm.id && (
+                  <button type="button" className="btn btn-sm btn-secondary"
+                    style={{ padding: "6px 14px", fontSize: 12, borderRadius: 6 }}
+                    onClick={() => setClientForm(emptyClientForm)}>
+                    Cancel Edit
+                  </button>
+                )}
+                <button type="submit" className="btn btn-primary"
+                  style={{ padding: "6px 16px", fontSize: 13, borderRadius: 6 }}>
+                  {clientForm.id ? "Update Client" : "+ Add Client"}
+                </button>
+              </div>
+            </form>
+
+            {/* Saved clients list */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+                Saved Clients ({clients.length})
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "40vh", overflowY: "auto" }}>
+                {clients.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "#94a3b8", padding: "20px 0", textAlign: "center" }}>
+                    No clients yet. Add one above to get started.
+                  </div>
+                ) : (
+                  clients.map((c) => (
+                    <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "#fff", border: "1px solid #e2e8f0" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13.5, color: "#0f172a" }}>{c.name}</div>
+                        <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 2 }}>
+                          {c.contact ? `📞 ${c.contact}` : <em style={{ color: "#cbd5e1" }}>no contact</em>}
+                          {c.contact && c.address ? " · " : ""}
+                          {c.address ? c.address : (c.contact ? "" : <em style={{ color: "#cbd5e1", marginLeft: 6 }}>no address</em>)}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button type="button" className="btn btn-sm btn-secondary"
+                          style={{ padding: "4px 10px", fontSize: 11, borderRadius: 6 }}
+                          onClick={() => handleClientEdit(c)}>Edit</button>
+                        <button type="button" className="btn btn-sm btn-danger"
+                          style={{ padding: "4px 10px", fontSize: 11, borderRadius: 6 }}
+                          onClick={() => handleClientDelete(c.id)}>Delete</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
