@@ -63,6 +63,7 @@ const emptyForm = {
   show_packaging: false,
   box_rate: "150",
   boxes: "1",
+  total_boxes: "1",
   packaging_mode: "box",
   packaging_name: "",
   packaging_amount: "",
@@ -144,6 +145,8 @@ function normalizePackagingEntries(b) {
         || (entry.kind !== "ice_box" && (Number(entry.boxes) > 0 || Number(entry.rate) > 0))
       ));
   }
+  // Only Boxes mode: count goes to total_boxes only, never to a packaging line/charge.
+  if (b?.packaging_mode === "only_boxes") return [];
   if (b?.show_packaging) {
     return [{
       kind: "box",
@@ -1063,7 +1066,6 @@ export default function Billing() {
     delete submitData.location_route;
     delete submitData.location_client;
     delete submitData.showExtrasDropdown;
-    delete submitData.packaging_mode;
     delete submitData.packaging_name;
     delete submitData.packaging_amount;
     delete submitData.packaging_edit_index;
@@ -1088,8 +1090,10 @@ export default function Billing() {
       consignee_mobile: submitData.consignee_mobile,
       freight_amount: freight,
       show_packaging: submitData.show_packaging,
+      packaging_mode: submitData.packaging_mode,
       packaging_entries: submitData.packaging_entries,
       boxes: submitData.boxes,
+      total_boxes: submitData.total_boxes,
       box_rate: submitData.box_rate,
       show_delivery: submitData.show_delivery,
       delivery_entries: submitData.delivery_entries,
@@ -1197,7 +1201,8 @@ export default function Billing() {
       show_packaging: b.show_packaging || false,
       box_rate: legacyFields.box_rate,
       boxes: legacyFields.boxes,
-      packaging_mode: "box",
+      total_boxes: String(b.total_boxes || legacyFields.boxes || "1"),
+      packaging_mode: b.packaging_mode === "only_boxes" ? "only_boxes" : "box",
       packaging_name: "",
       packaging_amount: "",
       packaging_entries: packagingEntries,
@@ -1645,9 +1650,11 @@ export default function Billing() {
       consignee_mobile: consignee.mobile,
       weight: String(wt),
       boxes: String(b.boxes || "1"),
+      total_boxes: String(b.total_boxes || b.boxes || "1"),
       contain: "water\nsample",
       rate_per_kg: String(ratePerKg),
       box_rate: String(b.box_rate || "150"),
+      packaging_mode: b.packaging_mode === "only_boxes" ? "only_boxes" : "box",
       packaging_entries: normalizePackagingEntries(b),
       show_packaging: b.show_packaging || false,
       show_delivery: b.show_delivery || false,
@@ -2315,6 +2322,7 @@ export default function Billing() {
                           >
                             <option value="box">Standard Box</option>
                             <option value="ice_box">Ice-Box (Custom Amount)</option>
+                            <option value="only_boxes">Only Boxes</option>
                           </select>
                         </div>
                         {form.packaging_mode === "ice_box" ? (
@@ -2329,6 +2337,13 @@ export default function Billing() {
                               <label style={{ fontSize: 12, fontWeight: 600 }}>Amount (₹)</label>
                               <input type="number" step="1" placeholder="0"
                                 value={form.packaging_amount} onChange={(e) => setForm({ ...form, packaging_amount: e.target.value })} />
+                            </div>
+                          </div>
+                        ) : form.packaging_mode === "only_boxes" ? (
+                          <div className="field-row">
+                            <div className="form-group" style={{ marginBottom: 10 }}>
+                              <label style={{ fontSize: 12, fontWeight: 600 }}>Number of Boxes</label>
+                              <input type="number" step="1" value={form.total_boxes} onChange={(e) => setForm({ ...form, total_boxes: e.target.value })} />
                             </div>
                           </div>
                         ) : (
@@ -2347,13 +2362,17 @@ export default function Billing() {
                           <div className="helper-hint info" style={{ margin: 0 }}>
                             {form.packaging_mode === "ice_box"
                               ? <>{form.packaging_name || "Ice-Box"} = <strong>₹{Number(form.packaging_amount) || 0}</strong></>
-                              : <>{Number(form.boxes) || 0} × ₹{Number(form.box_rate) || 0} = <strong>₹{(Number(form.boxes) || 0) * (Number(form.box_rate) || 0)}</strong></>}
+                              : form.packaging_mode === "only_boxes"
+                                ? <>Reflected in invoice Boxes column. <strong>No charge applied.</strong></>
+                                : <>{Number(form.boxes) || 0} × ₹{Number(form.box_rate) || 0} = <strong>₹{(Number(form.boxes) || 0) * (Number(form.box_rate) || 0)}</strong></>}
                           </div>
-                          <button type="button" className="btn btn-primary btn-sm" onClick={upsertPackagingEntry}>
-                            {form.packaging_edit_index !== null ? "Update Entry" : "+ Add Entry"}
-                          </button>
+                          {form.packaging_mode !== "only_boxes" && (
+                            <button type="button" className="btn btn-primary btn-sm" onClick={upsertPackagingEntry}>
+                              {form.packaging_edit_index !== null ? "Update Entry" : "+ Add Entry"}
+                            </button>
+                          )}
                         </div>
-                        {form.packaging_entries.length > 0 && (
+                        {form.packaging_mode !== "only_boxes" && form.packaging_entries.length > 0 && (
                           <div className="entry-list">
                             <div className="entry-list-header">Added ({form.packaging_entries.length})</div>
                             {form.packaging_entries.map((entry, i) => {

@@ -5,7 +5,7 @@ const { supabase } = require("../config/db");
 // Helper: extract extra_data JSON from request body
 function extractExtraData(body) {
   const {
-    show_packaging, boxes, box_rate, packaging_entries,
+    show_packaging, packaging_mode, boxes, total_boxes, box_rate, packaging_entries,
     show_oda, oda_location, oda_person, oda_amount,
     show_pickup, pickup_rate, pickup_entries,
     show_other, other_desc, other_amount, other_entries,
@@ -14,7 +14,9 @@ function extractExtraData(body) {
   } = body;
   return {
     show_packaging: show_packaging || false,
+    packaging_mode: packaging_mode || "box",
     boxes: boxes || "1",
+    total_boxes: total_boxes || "1",
     box_rate: box_rate || "150",
     packaging_entries: packaging_entries || [],
     show_oda: show_oda || false,

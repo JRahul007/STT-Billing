@@ -53,6 +53,8 @@ function normalizePackagingEntries(inv) {
         || (entry.kind !== "ice_box" && (Number(entry.boxes) > 0 || Number(entry.rate) > 0))
       ));
   }
+  // Only Boxes mode: count goes to total_boxes only, never to a packaging line/charge.
+  if (inv?.packaging_mode === "only_boxes") return [];
   if (inv?.show_packaging) {
     return [{
       kind: "box",
@@ -724,6 +726,7 @@ export default function InvoiceCreate() {
                             value={inv.packaging_mode} onChange={(e) => setInv({ ...inv, packaging_mode: e.target.value })}>
                             <option value="box">Box & Packaging</option>
                             <option value="ice_box">Box & Packaging (Ice-Box)</option>
+                            <option value="only_boxes">Only Boxes</option>
                           </select>
                         </div>
                         {inv.packaging_mode === "ice_box" ? (
@@ -740,6 +743,12 @@ export default function InvoiceCreate() {
                                 value={inv.packaging_amount} onChange={(e) => setInv({ ...inv, packaging_amount: e.target.value })} />
                             </div>
                           </>
+                        ) : inv.packaging_mode === "only_boxes" ? (
+                          <div style={{ flex: 1 }}>
+                            <label style={{ fontSize: 11, color: "#555" }}>Number of Boxes</label>
+                            <input type="number" step="1" style={{ width: "100%", padding: "5px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, marginTop: 2 }}
+                              value={inv.total_boxes} onChange={(e) => setInv({ ...inv, total_boxes: e.target.value })} />
+                          </div>
                         ) : (
                           <>
                             <div style={{ flex: 1 }}>
@@ -755,18 +764,22 @@ export default function InvoiceCreate() {
                           </>
                         )}
                       </div>
-                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                        <button type="button" className="btn btn-sm" style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
-                          onClick={upsertPackagingEntry}>
-                          {inv.packaging_edit_index !== null ? "Update Entry" : "Add Entry"}
-                        </button>
-                      </div>
+                      {inv.packaging_mode !== "only_boxes" && (
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                          <button type="button" className="btn btn-sm" style={{ background: "#4361ee", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 11 }}
+                            onClick={upsertPackagingEntry}>
+                            {inv.packaging_edit_index !== null ? "Update Entry" : "Add Entry"}
+                          </button>
+                        </div>
+                      )}
                       <div style={{ fontSize: 12, color: "#555" }}>
                         {inv.packaging_mode === "ice_box"
                           ? <span>{inv.packaging_name || "Ice-Box"} = <strong>₹{Number(inv.packaging_amount) || 0}</strong></span>
-                          : <span>{Number(inv.boxes) || 0} box × ₹{Number(inv.box_rate) || 0} = <strong>₹{(Number(inv.boxes) || 0) * (Number(inv.box_rate) || 0)}</strong></span>}
+                          : inv.packaging_mode === "only_boxes"
+                            ? <span>Reflected in invoice Boxes column. <strong>No charge applied.</strong></span>
+                            : <span>{Number(inv.boxes) || 0} box × ₹{Number(inv.box_rate) || 0} = <strong>₹{(Number(inv.boxes) || 0) * (Number(inv.box_rate) || 0)}</strong></span>}
                       </div>
-                      {packagingEntries.length > 0 && (
+                      {inv.packaging_mode !== "only_boxes" && packagingEntries.length > 0 && (
                         <div style={{ marginTop: 8 }}>
                           <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block" }}>Added ({packagingEntries.length})</label>
                           {packagingEntries.map((entry, i) => {
@@ -1323,7 +1336,7 @@ export default function InvoiceCreate() {
                   </td>
                   <td style={{ textAlign: "center", verticalAlign: "middle" }}>
                     <input className="edt" style={{ ...edt, width: 30, textAlign: "center" }}
-                      value={inv.boxes} onChange={(e) => setInv({ ...inv, boxes: e.target.value })} />
+                      value={inv.total_boxes} onChange={(e) => setInv({ ...inv, total_boxes: e.target.value })} />
                   </td>
                   <td style={{ verticalAlign: "middle" }}>
                     <textarea className="edt-area edt" style={{ ...edt, resize: "none", width: "100%", fontSize: 12, textAlign: "center" }}
