@@ -5,6 +5,7 @@ import Billing from "./pages/Billing";
 import InvoiceCreate from "./pages/InvoiceCreate";
 import InvoiceView from "./pages/InvoiceView";
 import Vehicle from "./pages/Vehicle";
+import Salary from "./pages/Salary";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -120,6 +121,7 @@ function AppLayout() {
           <NavLink to="/billing">Billing</NavLink>
           <NavLink to="/invoice/create">Create Invoice</NavLink>
           <NavLink to="/vehicle">Vehicle</NavLink>
+          <NavLink to="/salary">Salary</NavLink>
         </nav>
         <div className="sidebar-footer">
           <div className="sidebar-user">
@@ -136,6 +138,7 @@ function AppLayout() {
           <Route path="/invoice/create" element={<InvoiceCreate />} />
           <Route path="/invoice/view" element={<InvoiceView />} />
           <Route path="/vehicle" element={<Vehicle />} />
+          <Route path="/salary" element={<Salary />} />
         </Routes>
       </main>
     </div>
