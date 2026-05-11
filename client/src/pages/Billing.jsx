@@ -1604,11 +1604,13 @@ export default function Billing() {
     const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#fff" });
     document.body.removeChild(container);
 
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF("p", "mm", "a4");
+    // JPEG @ 0.92 + compress drops file size from ~7 MB → ~200–400 KB
+    // with no visible quality loss for invoice text/tables.
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
+    const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
     const pdfW = pdf.internal.pageSize.getWidth();
     const pdfH = (canvas.height * pdfW) / canvas.width;
-    pdf.addImage(imgData, "PNG", 0, 0, pdfW, pdfH);
+    pdf.addImage(imgData, "JPEG", 0, 0, pdfW, pdfH, undefined, "FAST");
     pdf.save(`Invoice_${b.invoice_no}_${dateStr || "draft"}.pdf`);
   };
 

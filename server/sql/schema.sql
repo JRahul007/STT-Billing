@@ -98,3 +98,66 @@ CREATE TABLE IF NOT EXISTS vehicles (
 CREATE INDEX IF NOT EXISTS idx_vehicles_date       ON vehicles(date);
 CREATE INDEX IF NOT EXISTS idx_vehicles_client     ON vehicles(client_name);
 CREATE INDEX IF NOT EXISTS idx_vehicles_created_at ON vehicles(created_at DESC);
+
+-- =====================================================================
+-- employees (master)
+-- =====================================================================
+-- One row per employee. Drives the dropdown on the Salary form
+-- (Salary.jsx → Manage Employees modal). Salary records snapshot these
+-- values at the time of generation so older slips don't change when the
+-- master record is later edited.
+CREATE TABLE IF NOT EXISTS employees (
+  id            BIGSERIAL PRIMARY KEY,
+  employee_no   TEXT        NOT NULL UNIQUE,
+  name          TEXT        NOT NULL,
+  designation   TEXT,
+  department    TEXT,
+  location      TEXT,
+  pan_number    TEXT,
+  joining_date  DATE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_employees_created_at ON employees(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department);
+
+-- =====================================================================
+-- salary_records (per-month payslip)
+-- =====================================================================
+-- Each row = one month's payslip for one employee. Employee details
+-- (name/designation/department/location/pan/joining_date) are denormalised
+-- copies so reprinting an old slip shows what was true at the time, even
+-- if the employees row was later updated or deleted.
+--
+-- pay_month/pay_year drive the "Month (Year)" column on the Salary table
+-- and the title of the PDF.
+CREATE TABLE IF NOT EXISTS salary_records (
+  id                 BIGSERIAL PRIMARY KEY,
+  employee_no        TEXT        NOT NULL,
+  name               TEXT        NOT NULL,
+  designation        TEXT,
+  department         TEXT,
+  location           TEXT,
+  pan_number         TEXT,
+  joining_date       DATE,
+  pay_month          SMALLINT    NOT NULL CHECK (pay_month BETWEEN 1 AND 12),
+  pay_year           SMALLINT    NOT NULL CHECK (pay_year BETWEEN 2000 AND 2100),
+  basic_salary       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  hra                NUMERIC(12,2) NOT NULL DEFAULT 0,
+  conveyance         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  medical            NUMERIC(12,2) NOT NULL DEFAULT 0,
+  special_allowance  NUMERIC(12,2) NOT NULL DEFAULT 0,
+  professional_tax   NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_earnings     NUMERIC(12,2) NOT NULL DEFAULT 0,
+  net_pay            NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- One payslip per employee per pay period — prevents duplicate Apr-2026 slips
+-- for the same Employee No.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_salary_records_emp_period_unique
+  ON salary_records (employee_no, pay_year, pay_month);
+
+CREATE INDEX IF NOT EXISTS idx_salary_records_period     ON salary_records(pay_year DESC, pay_month DESC);
+CREATE INDEX IF NOT EXISTS idx_salary_records_employee   ON salary_records(employee_no);
+CREATE INDEX IF NOT EXISTS idx_salary_records_created_at ON salary_records(created_at DESC);
