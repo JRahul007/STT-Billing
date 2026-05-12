@@ -349,6 +349,7 @@ export default function Billing() {
   const [partyForm, setPartyForm] = useState({ name: "", address: "", mobile: "" });
   const [filterMonth, setFilterMonth] = useState("");
   const [filterYear, setFilterYear] = useState(new Date().getFullYear().toString());
+  const [filterDate, setFilterDate] = useState("");
   const [filterLocation, setFilterLocation] = useState("");
   const [filterClient, setFilterClient] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -397,15 +398,18 @@ export default function Billing() {
 
   const filteredBillings = useMemo(() => {
     return billings.filter((b) => {
-      if (!b.date) return !filterMonth && !filterYear;
+      if (!b.date) return !filterMonth && !filterYear && !filterDate;
       const d = new Date(b.date);
+      // b.date may be "YYYY-MM-DD" or "YYYY-MM-DDT…"; compare date portion only.
+      const bDateStr = String(b.date).split("T")[0];
+      if (filterDate && bDateStr !== filterDate) return false;
       if (filterYear && d.getFullYear() !== parseInt(filterYear)) return false;
       if (filterMonth && (d.getMonth() + 1) !== parseInt(filterMonth)) return false;
       if (filterLocation && extractLocation(b.location) !== filterLocation) return false;
       if (filterClient && b.consignee_name !== filterClient) return false;
       return true;
     });
-  }, [billings, filterMonth, filterYear, filterLocation, filterClient]);
+  }, [billings, filterMonth, filterYear, filterDate, filterLocation, filterClient]);
 
   const filterTotals = useMemo(() => {
     return filteredBillings.reduce(
@@ -427,7 +431,7 @@ export default function Billing() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterMonth, filterYear, filterLocation, filterClient]);
+  }, [filterMonth, filterYear, filterDate, filterLocation, filterClient]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -1713,6 +1717,11 @@ export default function Billing() {
             </select>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, fontWeight: 600 }}>Date:</label>
+            <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13 }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <label style={{ fontSize: 13, fontWeight: 600 }}>Location:</label>
             <select value={filterLocation} onChange={(e) => setFilterLocation(e.target.value)}
               style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13 }}>
@@ -1728,7 +1737,7 @@ export default function Billing() {
               {availableClients.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
-          <button className="btn btn-sm btn-secondary" onClick={() => { setFilterYear(new Date().getFullYear().toString()); setFilterMonth(""); setFilterLocation(""); setFilterClient(""); }}>
+          <button className="btn btn-sm btn-secondary" onClick={() => { setFilterYear(new Date().getFullYear().toString()); setFilterMonth(""); setFilterDate(""); setFilterLocation(""); setFilterClient(""); }}>
             Reset
           </button>
           <span style={{ fontSize: 13, color: "#666", marginLeft: "auto" }}>
