@@ -82,18 +82,24 @@ CREATE TABLE IF NOT EXISTS vehicles (
   id              BIGSERIAL PRIMARY KEY,
   invoice_no      TEXT        NOT NULL UNIQUE,
   date            DATE        NOT NULL,               -- bill date (beside invoice no.)
-  trip_date       DATE,                               -- actual trip date (in description)
+  trip_date       DATE,                               -- legacy single trip date (kept for backward compat)
   client_name     TEXT,
-  description     TEXT,
+  description     TEXT,                               -- legacy single description (kept for backward compat)
   rate            NUMERIC(12,2),
   trip            TEXT,                                -- text: can be "2", "1A", "Round Trip" etc.
-  start_km        NUMERIC(12,2),
-  end_km          NUMERIC(12,2),
+  start_km        NUMERIC(12,2),                       -- legacy single start km (kept for backward compat)
+  end_km          NUMERIC(12,2),                       -- legacy single end km (kept for backward compat)
+  total_km        NUMERIC(12,2),                       -- aggregate KM across all description entries
   amount          NUMERIC(12,2),
   expenses        NUMERIC(12,2),
-  remark          TEXT,
+  remark          TEXT,                                -- legacy single remark (kept for backward compat)
+  description_entries JSONB    NOT NULL DEFAULT '[]'::jsonb,  -- [{ trip_date, description, total_km, start_km, end_km, remark }]
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- For existing databases: idempotent column adds (Postgres ignores when present).
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS total_km            NUMERIC(12,2);
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS description_entries JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_vehicles_date       ON vehicles(date);
 CREATE INDEX IF NOT EXISTS idx_vehicles_client     ON vehicles(client_name);
