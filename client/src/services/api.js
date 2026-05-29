@@ -61,4 +61,11 @@ export const createParty = (data) => api.post("/parties", data);
 export const updateParty = (id, data) => api.put(`/parties/${id}`, data);
 export const deleteParty = (id) => api.delete(`/parties/${id}`);
 
+// Vehicles
+export const getVehicles = () => api.get("/vehicles");
+export const createVehicle = (data) => api.post("/vehicles", data);
+export const updateVehicle = (id, data) => api.put(`/vehicles/${id}`, data);
+export const upsertVehicleByInvoice = (invoiceNo, data) => api.put(`/vehicles/upsert/${encodeURIComponent(invoiceNo)}`, data);
+export const deleteVehicle = (id) => api.delete(`/vehicles/${id}`);
+
 export default api;

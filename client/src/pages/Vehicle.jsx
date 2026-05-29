@@ -3,6 +3,7 @@ import JsBarcode from "jsbarcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { getDefaultStamp } from "../defaultStamp";
+import { getVehicles, createVehicle, updateVehicle, upsertVehicleByInvoice, deleteVehicle } from "../services/api";
 
 const STORAGE_KEY = "vehicle_entries";
 const CLIENTS_STORAGE_KEY = "vehicle_clients";
@@ -118,13 +119,32 @@ export default function Vehicle() {
   const [showClientModal, setShowClientModal] = useState(false);
   const [clientForm, setClientForm] = useState(emptyClientForm);
 
-  useEffect(() => {
+  // Load: prefer Supabase, fall back to localStorage. Any local-only rows that
+  // aren't yet on the server are merged in so the UI keeps showing them; they
+  // get pushed up the next time the user edits / saves them.
+  const loadEntries = async () => {
+    let localList = [];
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      setEntries(Array.isArray(saved) ? saved : []);
-    } catch {
-      setEntries([]);
+      localList = Array.isArray(saved) ? saved : [];
+    } catch { localList = []; }
+    try {
+      const res = await getVehicles();
+      const apiList = Array.isArray(res.data) ? res.data : [];
+      const apiInvoiceNos = new Set(apiList.map((v) => v.invoice_no));
+      const localOnly = localList.filter((v) => v.invoice_no && !apiInvoiceNos.has(v.invoice_no));
+      const merged = [...apiList, ...localOnly];
+      setEntries(merged);
+      // Keep localStorage in sync so we can still render when offline.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    } catch (e) {
+      // API unavailable → render local entries only.
+      setEntries(localList);
     }
+  };
+
+  useEffect(() => {
+    loadEntries();
     try {
       const savedClients = JSON.parse(localStorage.getItem(CLIENTS_STORAGE_KEY) || "[]");
       setClients(Array.isArray(savedClients) ? savedClients : []);
@@ -133,6 +153,7 @@ export default function Vehicle() {
     }
   }, []);
 
+  // Mirror writes to localStorage so the offline fallback stays current.
   const saveAll = (list) => {
     setEntries(list);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
@@ -287,7 +308,7 @@ export default function Vehicle() {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const descEntries = (form.description_entries || []).filter((d) => (
       d.description?.trim() || d.trip_date || d.total_km || d.start_km || d.end_km || d.remark
@@ -313,20 +334,45 @@ export default function Vehicle() {
       amount:      String(grandTotal || ""),
     };
     if (editing) {
-      const updated = entries.map((en) => (en.id === editing.id ? { ...en, ...payload } : en));
-      saveAll(updated);
+      // Update path. If the editing record has a Supabase numeric id (small int)
+      // try PUT /:id; otherwise (or on failure) fall back to upsert by invoice_no
+      // so a previously local-only entry gets pushed up to the server.
+      try {
+        const hasNumericId = typeof editing.id === "number" && editing.id < 1e12;
+        const res = hasNumericId
+          ? await updateVehicle(editing.id, payload)
+          : await upsertVehicleByInvoice(payload.invoice_no, payload);
+        const saved = res.data;
+        const updated = entries.map((en) => (en.id === editing.id ? saved : en));
+        saveAll(updated);
+      } catch (e) {
+        // Offline / API down: persist locally only so the UI doesn't lose work.
+        const updated = entries.map((en) => (en.id === editing.id ? { ...en, ...payload } : en));
+        saveAll(updated);
+      }
     } else {
       saveVehicleInvoiceNo(payload.invoice_no);
-      const newEntry = { id: Date.now(), ...payload };
-      saveAll([newEntry, ...entries]);
+      try {
+        const res = await createVehicle(payload);
+        const saved = res.data;
+        saveAll([saved, ...entries]);
+      } catch (e) {
+        const newEntry = { id: Date.now(), ...payload };
+        saveAll([newEntry, ...entries]);
+      }
     }
     setShowModal(false);
     setEditing(null);
     setForm(emptyForm);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     if (!window.confirm("Delete this vehicle entry?")) return;
+    const target = entries.find((en) => en.id === id);
+    const hasNumericId = target && typeof target.id === "number" && target.id < 1e12;
+    if (hasNumericId) {
+      try { await deleteVehicle(id); } catch (e) { /* fall back to local removal */ }
+    }
     saveAll(entries.filter((en) => en.id !== id));
   };
 
