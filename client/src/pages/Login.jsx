@@ -13,7 +13,7 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      const res = await loginUser(form);
+      const res = await loginUser({ ...form, email: form.email.trim() });
       if (!res.data || !res.data.token || typeof res.data.token !== "string") {
         setError("Server returned an invalid response. Please check your API configuration.");
         return;

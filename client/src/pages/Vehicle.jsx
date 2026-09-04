@@ -11,6 +11,79 @@ const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Se
 
 const emptyClientForm = { id: null, name: "", contact: "", address: "", gstin: "", email: "" };
 
+// ---------------------------------------------------------------------------
+// Selectable text for the downloaded bill.
+//
+// The bill is rasterised with html2canvas, which flattens everything to pixels
+// and leaves the PDF with no text at all - nothing can be selected, copied or
+// searched. To keep the exact visual output while making the text usable, we
+// record where every word sits on screen and replay those words into the PDF as
+// an invisible layer on top of the image: the same technique scanned/OCR'd PDFs
+// use.
+// ---------------------------------------------------------------------------
+
+// jsPDF's standard fonts are WinAnsi-encoded. A single non-Latin glyph (the
+// rupee sign, a curly quote) silently flips the whole string to a 2-byte
+// encoding, which then copies out as garbage - so fold those to ASCII first.
+const pdfSafeText = (s) => String(s)
+  .replace(/₹/g, "Rs.")
+  .replace(/[‘’]/g, "'")
+  .replace(/[“”]/g, '"')
+  .replace(/[–—]/g, "-")
+  .replace(/[^\x20-\xFF]/g, "");
+
+// CSS text-transform is applied at paint time, so the DOM still holds the
+// untransformed text. Mirror it, or an uppercased name copies out lowercase.
+const applyTextTransform = (s, transform) => {
+  if (transform === "uppercase") return s.toUpperCase();
+  if (transform === "lowercase") return s.toLowerCase();
+  if (transform === "capitalize") return s.replace(/\b\w/g, (c) => c.toUpperCase());
+  return s;
+};
+
+// Capture every visible word with its box, in CSS pixels relative to the bill's
+// top-left corner. Must run while the node is still mounted - once it is removed
+// from the document every rect measures zero.
+function collectTextLayer(root) {
+  const rootRect = root.getBoundingClientRect();
+  const items = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) =>
+      n.nodeValue && n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+  });
+
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!parent) continue;
+    // The watermark is an SVG <text>; skip it so "STT" doesn't land in copied text.
+    if (parent.closest("svg")) continue;
+    const cs = window.getComputedStyle(parent);
+    if (cs.visibility === "hidden" || cs.display === "none" || Number(cs.opacity) === 0) continue;
+
+    // Measure word by word so wrapped lines keep their real positions.
+    const wordRe = /\S+/g;
+    let m;
+    while ((m = wordRe.exec(node.nodeValue)) !== null) {
+      const range = document.createRange();
+      range.setStart(node, m.index);
+      range.setEnd(node, m.index + m[0].length);
+      const r = range.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const text = pdfSafeText(applyTextTransform(m[0], cs.textTransform));
+      if (!text.trim()) continue;
+      items.push({
+        text,
+        x: r.left - rootRect.left,
+        y: r.top - rootRect.top,
+        fontPx: parseFloat(cs.fontSize) || 12,
+        bold: (parseInt(cs.fontWeight, 10) || 400) >= 600,
+      });
+    }
+  }
+  return { width: rootRect.width, items };
+}
+
+
 const numberToWords = (num) => {
   if (num === 0) return "Zero";
   const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
@@ -398,6 +471,20 @@ export default function Vehicle() {
     const clientRecord = findClient(en.client_name);
     const billDateStr = fmtDate(en.date);
     const escHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // Optional client details for the bill header. Each line is emitted only when
+    // that field actually has a value, so bills for clients with nothing beyond a
+    // name render exactly as before.
+    const clientLine = (label, value, gap) => {
+      const v = String(value ?? "").trim();
+      if (!v) return "";
+      return `<div style="font-size:11.5px; color:#000; margin-top:${gap}px; line-height:1.45;">${label ? `${label}: ` : ""}${escHtml(v)}</div>`;
+    };
+    const clientDetailsHtml = clientRecord
+      ? clientLine("", clientRecord.address, 3) +
+        clientLine("Contact", clientRecord.contact, 2) +
+        clientLine("GSTIN", clientRecord.gstin, 2) +
+        clientLine("Email", clientRecord.email, 2)
+      : "";
     const nl2br = (s) => escHtml(s).replace(/\n/g, "<br/>");
 
     // Barcode for the INVOICE No cell (matches the older billing PDF).
@@ -469,8 +556,7 @@ export default function Vehicle() {
         <tr>
           <td style="${cell} padding:12px 10px; line-height:1.6;">
             <strong style="font-size:14px; text-transform:uppercase; color:#000;">M/s ${escHtml(en.client_name || "-")}</strong>
-            ${clientRecord && clientRecord.address ? `<div style="font-size:11.5px; color:#000; margin-top:3px; line-height:1.45;">${escHtml(clientRecord.address)}</div>` : ""}
-            ${clientRecord && clientRecord.contact ? `<div style="font-size:11.5px; color:#000; margin-top:2px;">Contact: ${escHtml(clientRecord.contact)}</div>` : ""}
+            ${clientDetailsHtml}
           </td>
           <td style="${cell} text-align:center; vertical-align:middle; padding:6px 4px;">
             ${barcodeDataUrl ? `<img src="${barcodeDataUrl}" style="max-width:100%; height:auto;" />` : ""}
@@ -612,6 +698,7 @@ export default function Vehicle() {
 
     const el = container.firstElementChild;
     const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#fff" });
+    const textLayer = collectTextLayer(el);
     document.body.removeChild(container);
 
     // JPEG @ 0.92 + compress drops file size from ~7 MB → ~200–400 KB
@@ -621,6 +708,28 @@ export default function Vehicle() {
     const pdfW = pdf.internal.pageSize.getWidth();
     const pdfH = (canvas.height * pdfW) / canvas.width;
     pdf.addImage(imgData, "JPEG", 0, 0, pdfW, pdfH, undefined, "FAST");
+
+    // Invisible text over the image, in the same coordinate space, so selection
+    // highlights line up with what the reader sees.
+    if (textLayer.width > 0) {
+      const pxToMm = pdfW / textLayer.width;
+      const PT_PER_MM = 72 / 25.4;
+      textLayer.items.forEach((it) => {
+        const sizePt = it.fontPx * pxToMm * PT_PER_MM;
+        if (!(sizePt > 0)) return;
+        try {
+          pdf.setFont("helvetica", it.bold ? "bold" : "normal");
+          pdf.setFontSize(sizePt);
+          pdf.text(it.text, it.x * pxToMm, it.y * pxToMm, {
+            baseline: "top",
+            renderingMode: "invisible",
+          });
+        } catch {
+          /* a stray glyph must never break the download */
+        }
+      });
+    }
+
     const fileDateTag = billDateStr ? billDateStr.replace(/\//g, "-") : "draft";
     pdf.save(`STT_${en.invoice_no}_${fileDateTag}.pdf`);
   };

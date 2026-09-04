@@ -34,7 +34,7 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Password must be at least 6 characters." });
     }
 
-    const normalized = email.toLowerCase();
+    const normalized = email.trim().toLowerCase();
 
     const { data: existing, error: existErr } = await supabase
       .from("users")
@@ -71,7 +71,7 @@ router.post("/login", async (req, res) => {
     const { data: user, error } = await supabase
       .from("users")
       .select("*")
-      .eq("email", email.toLowerCase())
+      .eq("email", email.trim().toLowerCase())
       .maybeSingle();
     if (error) throw error;
     if (!user) return res.status(400).json({ error: "Invalid email or password." });
@@ -91,7 +91,7 @@ router.post("/forgot-password", async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Email is required." });
 
-    const normalized = email.toLowerCase();
+    const normalized = email.trim().toLowerCase();
     const { data: user, error } = await supabase
       .from("users")
       .select("id")
@@ -133,7 +133,7 @@ router.post("/reset-password", async (req, res) => {
     const { data: user, error } = await supabase
       .from("users")
       .select("*")
-      .eq("email", email.toLowerCase())
+      .eq("email", email.trim().toLowerCase())
       .eq("reset_token", reset_code)
       .maybeSingle();
     if (error) throw error;
