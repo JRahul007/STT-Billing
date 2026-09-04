@@ -528,7 +528,11 @@ export default function Vehicle() {
     // The description rows are now packed across as many pages as they need:
     // the letterhead, client block and column headings are re-rendered on each
     // page, and the totals / amount-in-words / bank blocks stay on the last one.
-    const PAGE_HTML_HEAD = `<div style="width:800px; background:#fff; color:#000; font-family:'Courier New',Courier,monospace; font-size:13px; position:relative;">
+    // The bill head is assembled from parts so a continuation page can skip
+    // the letterhead and the client / invoice block and simply carry on with
+    // the table, instead of restarting the invoice on every sheet.
+    const H_OPEN = `<div style="width:800px; background:#fff; color:#000; font-family:'Courier New',Courier,monospace; font-size:13px; position:relative;">`;
+    const H_LETTERHEAD = `
 
   <!-- =========================================================
        HEADER (separate from body): full-width orange band with
@@ -549,7 +553,8 @@ export default function Vehicle() {
   </div>
 
   <!-- Separator between header and body -->
-  <div style="height:0; border-bottom:3px double #222; margin:0 24px;"></div>
+  <div style="height:0; border-bottom:3px double #222; margin:0 24px;"></div>`;
+    const H_BODY_OPEN = `
 
   <!-- =========================================================
        BODY: bordered on all 4 sides, centered with side margins.
@@ -567,7 +572,8 @@ export default function Vehicle() {
         <text x="105" y="120" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-size="52" font-weight="900" font-style="italic" fill="#ffffff" letter-spacing="2">STT</text>
       </svg>
     </div>
-
+`;
+    const H_CLIENT = `
     <!-- Name / INVOICE No / Date block (older billing layout) -->
     <table style="width:100%; border-collapse:collapse; position:relative; z-index:1;">
       <colgroup><col style="width:65%"/><col style="width:15%"/><col style="width:20%"/></colgroup>
@@ -592,7 +598,8 @@ export default function Vehicle() {
         </tr>
       </tbody>
     </table>
-
+`;
+    const H_TABLE_OPEN = `
     <!-- Description table: Date | Description | Rate | Trip | Amount | Remark -->
     <table style="width:100%; border-collapse:collapse; border-top:none; position:relative; z-index:1;">
       <colgroup>
@@ -614,6 +621,8 @@ export default function Vehicle() {
         </tr>
       </thead>
       <tbody data-desc-rows="1">`;
+    const PAGE_HTML_HEAD = H_OPEN + H_LETTERHEAD + H_BODY_OPEN + H_CLIENT + H_TABLE_OPEN;
+    const PAGE_HTML_HEAD_CONT = H_OPEN + H_BODY_OPEN + H_TABLE_OPEN;
     const rowsHtmlFor = (list) =>         list.length === 0
           ? `<tr><td style="border:1px solid #333; height:60px;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td></tr>`
           : list.map((d) => {
@@ -723,8 +732,9 @@ export default function Vehicle() {
 
   </div>
 </div>`;
-    const buildPage = (rowsHtml, isLast) =>
-      PAGE_HTML_HEAD + rowsHtml + (isLast ? PAGE_HTML_TAIL_LAST : PAGE_HTML_TAIL_CONT);
+    const buildPage = (rowsHtml, isLast, isContinuation) =>
+      (isContinuation ? PAGE_HTML_HEAD_CONT : PAGE_HTML_HEAD) + rowsHtml +
+      (isLast ? PAGE_HTML_TAIL_LAST : PAGE_HTML_TAIL_CONT);
 
     const container = document.createElement("div");
     container.style.cssText = "position:fixed; left:-9999px; top:0; z-index:-1;";
@@ -753,7 +763,7 @@ export default function Vehicle() {
       // which the measured footer height does not account for.
       const SAFETY_PX = 40;
       const pageHeightPx = mRect.width * (pdfPageH / pdfW) - SAFETY_PX;
-      const headHeightPx = rowEls.length ? rowEls[0].getBoundingClientRect().top - mRect.top : 0;
+      const headFirstPx = rowEls.length ? rowEls[0].getBoundingClientRect().top - mRect.top : 0;
       const footEl = mBody.children[renderedRowCount];
       const footHeightPx = footEl ? mRect.bottom - footEl.getBoundingClientRect().top : 0;
 
@@ -762,16 +772,29 @@ export default function Vehicle() {
       const blocks = rowEls.map((rowEl, i) => ({ row: i, h: rowEl.getBoundingClientRect().height }));
       blocks.push({ row: -1, h: footHeightPx });
 
+      // A continuation page omits the letterhead and the client block, so its head
+      // is shorter and it fits more rows. Measure that layout too rather than
+      // assuming page one's geometry for the whole document.
+      container.innerHTML = buildPage(rowsHtmlFor(descEntries), true, true);
+      await waitForAssets(container);
+      const cRoot = container.firstElementChild;
+      const cBody = cRoot.querySelector("tbody[data-desc-rows]");
+      const cRect = cRoot.getBoundingClientRect();
+      const cRows = Array.from(cBody.children).slice(0, renderedRowCount);
+      const headContPx = cRows.length
+        ? cRows[0].getBoundingClientRect().top - cRect.top
+        : headFirstPx;
+
       const pages = [];
       let current = [];
-      let used = headHeightPx;
+      let used = headFirstPx;
       for (const b of blocks) {
         // Always keep at least one block per page: an oversized single row then
         // gets a page to itself instead of looping forever.
         if (current.length && used + b.h > pageHeightPx) {
           pages.push(current);
           current = [];
-          used = headHeightPx;
+          used = headContPx;
         }
         current.push(b);
         used += b.h;
@@ -784,7 +807,8 @@ export default function Vehicle() {
       if (pages.length > 1 && lastPage.length === 1 && lastPage[0].row === -1) {
         const prev = pages[pages.length - 2];
         const candidate = prev[prev.length - 1];
-        if (prev.length > 1 && headHeightPx + candidate.h + footHeightPx <= pageHeightPx) {
+        const lastHeadPx = pages.length > 1 ? headContPx : headFirstPx;
+        if (prev.length > 1 && lastHeadPx + candidate.h + footHeightPx <= pageHeightPx) {
           prev.pop();
           lastPage.unshift(candidate);
         }
@@ -797,7 +821,7 @@ export default function Vehicle() {
           .filter(Boolean);
         const isLast = pages[p].some((b) => b.row === -1);
 
-        container.innerHTML = buildPage(rowsHtmlFor(pageRows), isLast);
+        container.innerHTML = buildPage(rowsHtmlFor(pageRows), isLast, p > 0);
         await waitForAssets(container);
 
         const el = container.firstElementChild;
