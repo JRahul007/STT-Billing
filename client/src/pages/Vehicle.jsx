@@ -41,6 +41,27 @@ const applyTextTransform = (s, transform) => {
   return s;
 };
 
+
+// html2canvas rasterises whatever is laid out at that instant, and an <img> with
+// height:auto contributes zero height until it has decoded. The letterhead logo,
+// the barcode and the signature stamp are all images, so measuring before they
+// load understates the page - which is how the closing blocks used to end up
+// past the bottom edge. Wait for them instead of guessing with a timer.
+const waitForAssets = async (root) => {
+  const imgs = Array.from(root.querySelectorAll("img"));
+  await Promise.all(imgs.map((img) => (img.complete && img.naturalHeight !== 0
+    ? Promise.resolve()
+    : new Promise((resolve) => {
+        // resolve on error too: a broken image must not stall the download
+        img.addEventListener("load", resolve, { once: true });
+        img.addEventListener("error", resolve, { once: true });
+      }))));
+  if (document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch { /* webfonts are best-effort */ }
+  }
+  // one more frame so the browser has applied the final layout before measuring
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+};
 // Capture every visible word with its box, in CSS pixels relative to the bill's
 // top-left corner. Must run while the node is still mounted - once it is removed
 // from the document every rect measures zero.
@@ -718,7 +739,7 @@ export default function Vehicle() {
       // percentages, so a row's height does not depend on which page it lands on
       // and a single measurement is enough to plan the whole document.
       container.innerHTML = buildPage(rowsHtmlFor(descEntries), true);
-      await new Promise((r) => setTimeout(r, 100));
+      await waitForAssets(container);
 
       const mRoot = container.firstElementChild;
       const mBody = mRoot.querySelector("tbody[data-desc-rows]");
@@ -777,7 +798,7 @@ export default function Vehicle() {
         const isLast = pages[p].some((b) => b.row === -1);
 
         container.innerHTML = buildPage(rowsHtmlFor(pageRows), isLast);
-        await new Promise((r) => setTimeout(r, 50));
+        await waitForAssets(container);
 
         const el = container.firstElementChild;
         const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#fff" });
