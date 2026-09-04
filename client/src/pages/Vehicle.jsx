@@ -501,10 +501,13 @@ export default function Vehicle() {
     const cell  = "border:1px solid #333; padding:6px 10px; vertical-align:top; font-size:13px; background:transparent; color:#000;";
     const empty = "border:1px solid #333; font-size:13px;";
 
-    const container = document.createElement("div");
-    container.style.cssText = "position:fixed; left:-9999px; top:0; z-index:-1;";
-    container.innerHTML = `
-<div style="width:800px; background:#fff; color:#000; font-family:'Courier New',Courier,monospace; font-size:13px; position:relative;">
+    // --- Page composition -------------------------------------------------
+    // The invoice used to be rasterised as one tall image dropped onto a single
+    // A4 page, so every row past the first page height was silently cropped.
+    // The description rows are now packed across as many pages as they need:
+    // the letterhead, client block and column headings are re-rendered on each
+    // page, and the totals / amount-in-words / bank blocks stay on the last one.
+    const PAGE_HTML_HEAD = `<div style="width:800px; background:#fff; color:#000; font-family:'Courier New',Courier,monospace; font-size:13px; position:relative;">
 
   <!-- =========================================================
        HEADER (separate from body): full-width orange band with
@@ -589,10 +592,10 @@ export default function Vehicle() {
           <th style="border:1px solid #333; padding:7px 6px; font-size:12px; font-weight:700;">Remark</th>
         </tr>
       </thead>
-      <tbody>
-        ${descEntries.length === 0
+      <tbody data-desc-rows="1">`;
+    const rowsHtmlFor = (list) =>         list.length === 0
           ? `<tr><td style="border:1px solid #333; height:60px;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td><td style="border:1px solid #333;"></td></tr>`
-          : descEntries.map((d) => {
+          : list.map((d) => {
             const tripDateStr = fmtDate(d.trip_date);
             const rate = parseFloat(d.rate)   || 0;
             const amt  = parseFloat(d.amount) || 0;
@@ -619,8 +622,8 @@ export default function Vehicle() {
                 <td style="border:1px solid #333; padding:8px 6px; font-size:12px; vertical-align:top;">${escHtml(d.remark) || "NA"}</td>
               </tr>
             `;
-          }).join("")}
-        <tr>
+          }).join("");
+    const PAGE_HTML_TAIL_LAST = `        <tr>
           <td style="border:1px solid #333; height:24px;"></td>
           <td style="border:1px solid #333;"></td>
           <td style="border:1px solid #333;"></td>
@@ -692,46 +695,134 @@ export default function Vehicle() {
 
   </div>
 </div>`;
+    // A continuation page just closes the table and the bordered body box.
+    const PAGE_HTML_TAIL_CONT = `
+      </tbody>
+    </table>
 
+  </div>
+</div>`;
+    const buildPage = (rowsHtml, isLast) =>
+      PAGE_HTML_HEAD + rowsHtml + (isLast ? PAGE_HTML_TAIL_LAST : PAGE_HTML_TAIL_CONT);
+
+    const container = document.createElement("div");
+    container.style.cssText = "position:fixed; left:-9999px; top:0; z-index:-1;";
     document.body.appendChild(container);
-    await new Promise((r) => setTimeout(r, 100));
 
-    const el = container.firstElementChild;
-    const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#fff" });
-    const textLayer = collectTextLayer(el);
-    document.body.removeChild(container);
-
-    // JPEG @ 0.92 + compress drops file size from ~7 MB → ~200–400 KB
-    // with no visible quality loss for invoice text/tables.
-    const imgData = canvas.toDataURL("image/jpeg", 0.92);
     const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
     const pdfW = pdf.internal.pageSize.getWidth();
-    const pdfH = (canvas.height * pdfW) / canvas.width;
-    pdf.addImage(imgData, "JPEG", 0, 0, pdfW, pdfH, undefined, "FAST");
+    const pdfPageH = pdf.internal.pageSize.getHeight();
 
-    // Invisible text over the image, in the same coordinate space, so selection
-    // highlights line up with what the reader sees.
-    if (textLayer.width > 0) {
-      const pxToMm = pdfW / textLayer.width;
-      const PT_PER_MM = 72 / 25.4;
-      textLayer.items.forEach((it) => {
-        const sizePt = it.fontPx * pxToMm * PT_PER_MM;
-        if (!(sizePt > 0)) return;
-        try {
-          pdf.setFont("helvetica", it.bold ? "bold" : "normal");
-          pdf.setFontSize(sizePt);
-          pdf.text(it.text, it.x * pxToMm, it.y * pxToMm, {
-            baseline: "top",
-            renderingMode: "invisible",
-          });
-        } catch {
-          /* a stray glyph must never break the download */
+    try {
+      // One measuring pass with every row present. Column widths are fixed
+      // percentages, so a row's height does not depend on which page it lands on
+      // and a single measurement is enough to plan the whole document.
+      container.innerHTML = buildPage(rowsHtmlFor(descEntries), true);
+      await new Promise((r) => setTimeout(r, 100));
+
+      const mRoot = container.firstElementChild;
+      const mBody = mRoot.querySelector("tbody[data-desc-rows]");
+      const mRect = mRoot.getBoundingClientRect();
+      const renderedRowCount = descEntries.length || 1;
+      const rowEls = Array.from(mBody.children).slice(0, renderedRowCount);
+
+      // Height of one A4 page expressed in the CSS pixels the bill is laid out
+      // in, since the 800px-wide artwork is scaled to the full 210mm page width.
+      // The margin covers the bordered box's bottom edge on continuation pages,
+      // which the measured footer height does not account for.
+      const SAFETY_PX = 40;
+      const pageHeightPx = mRect.width * (pdfPageH / pdfW) - SAFETY_PX;
+      const headHeightPx = rowEls.length ? rowEls[0].getBoundingClientRect().top - mRect.top : 0;
+      const footEl = mBody.children[renderedRowCount];
+      const footHeightPx = footEl ? mRect.bottom - footEl.getBoundingClientRect().top : 0;
+
+      // Pack rows into pages, treating the closing blocks as one final unit so
+      // they move onto their own page rather than being clipped.
+      const blocks = rowEls.map((rowEl, i) => ({ row: i, h: rowEl.getBoundingClientRect().height }));
+      blocks.push({ row: -1, h: footHeightPx });
+
+      const pages = [];
+      let current = [];
+      let used = headHeightPx;
+      for (const b of blocks) {
+        // Always keep at least one block per page: an oversized single row then
+        // gets a page to itself instead of looping forever.
+        if (current.length && used + b.h > pageHeightPx) {
+          pages.push(current);
+          current = [];
+          used = headHeightPx;
         }
-      });
+        current.push(b);
+        used += b.h;
+      }
+      pages.push(current);
+
+      // If the closing blocks spilled onto a page of their own, pull the last row
+      // down with them when it fits, so the final page never looks empty.
+      const lastPage = pages[pages.length - 1];
+      if (pages.length > 1 && lastPage.length === 1 && lastPage[0].row === -1) {
+        const prev = pages[pages.length - 2];
+        const candidate = prev[prev.length - 1];
+        if (prev.length > 1 && headHeightPx + candidate.h + footHeightPx <= pageHeightPx) {
+          prev.pop();
+          lastPage.unshift(candidate);
+        }
+      }
+
+      for (let p = 0; p < pages.length; p++) {
+        const pageRows = pages[p]
+          .filter((b) => b.row >= 0)
+          .map((b) => descEntries[b.row])
+          .filter(Boolean);
+        const isLast = pages[p].some((b) => b.row === -1);
+
+        container.innerHTML = buildPage(rowsHtmlFor(pageRows), isLast);
+        await new Promise((r) => setTimeout(r, 50));
+
+        const el = container.firstElementChild;
+        const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#fff" });
+        const textLayer = collectTextLayer(el);
+
+        // JPEG @ 0.92 + compress drops file size from ~7 MB to ~200-400 KB
+        // with no visible quality loss for invoice text/tables.
+        const imgData = canvas.toDataURL("image/jpeg", 0.92);
+        const naturalH = (canvas.height * pdfW) / canvas.width;
+        // A single row taller than a whole page cannot be broken across pages,
+        // so shrink that page to fit rather than letting it run off the edge.
+        const fit = naturalH > pdfPageH ? pdfPageH / naturalH : 1;
+        const drawW = pdfW * fit;
+        const drawH = naturalH * fit;
+        if (p > 0) pdf.addPage();
+        pdf.addImage(imgData, "JPEG", 0, 0, drawW, drawH, undefined, "FAST");
+
+        // Invisible text over the image, in the same coordinate space, so
+        // selection highlights line up with what the reader sees.
+        if (textLayer.width > 0) {
+          const pxToMm = drawW / textLayer.width;
+          const PT_PER_MM = 72 / 25.4;
+          textLayer.items.forEach((it) => {
+            const sizePt = it.fontPx * pxToMm * PT_PER_MM;
+            if (!(sizePt > 0)) return;
+            try {
+              pdf.setFont("helvetica", it.bold ? "bold" : "normal");
+              pdf.setFontSize(sizePt);
+              pdf.text(it.text, it.x * pxToMm, it.y * pxToMm, {
+                baseline: "top",
+                renderingMode: "invisible",
+              });
+            } catch {
+              /* a stray glyph must never break the download */
+            }
+          });
+        }
+      }
+    } finally {
+      document.body.removeChild(container);
     }
 
     const fileDateTag = billDateStr ? billDateStr.replace(/\//g, "-") : "draft";
     pdf.save(`STT_${en.invoice_no}_${fileDateTag}.pdf`);
+
   };
 
   // --- Filters ---
