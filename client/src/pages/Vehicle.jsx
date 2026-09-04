@@ -49,18 +49,33 @@ const applyTextTransform = (s, transform) => {
 // past the bottom edge. Wait for them instead of guessing with a timer.
 const waitForAssets = async (root) => {
   const imgs = Array.from(root.querySelectorAll("img"));
-  await Promise.all(imgs.map((img) => (img.complete && img.naturalHeight !== 0
+  await Promise.all(imgs.map((img) => (img.complete
+    // `complete` alone is the right test: it is true once loading has finished,
+    // successfully or not. An already-loaded image whose naturalHeight is 0 (an
+    // SVG data URL with no intrinsic size, for instance) will never fire another
+    // load event, so waiting on one would hang the download forever.
     ? Promise.resolve()
     : new Promise((resolve) => {
+        let settled = false;
+        const finish = () => { if (!settled) { settled = true; resolve(); } };
         // resolve on error too: a broken image must not stall the download
-        img.addEventListener("load", resolve, { once: true });
-        img.addEventListener("error", resolve, { once: true });
+        img.addEventListener("load", finish, { once: true });
+        img.addEventListener("error", finish, { once: true });
+        // and never let one slow asset hold the whole invoice hostage
+        setTimeout(finish, 3000);
       }))));
   if (document.fonts && document.fonts.ready) {
     try { await document.fonts.ready; } catch { /* webfonts are best-effort */ }
   }
-  // one more frame so the browser has applied the final layout before measuring
-  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  // one more frame so the browser has applied the final layout before measuring.
+  // Raced against a timer because requestAnimationFrame is throttled to a stop in
+  // background tabs - without the race, switching tabs mid-download hangs it.
+  await new Promise((resolve) => {
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    requestAnimationFrame(finish);
+    setTimeout(finish, 100);
+  });
 };
 // Capture every visible word with its box, in CSS pixels relative to the bill's
 // top-left corner. Must run while the node is still mounted - once it is removed
