@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import JsBarcode from "jsbarcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import defaultStamp, { getDefaultStamp } from "../defaultStamp";
+import "./invoiceStorage";
 
 const defaultLocations = [
   { route: "BOM-PUNE", rate_per_kg: "" },
@@ -148,8 +149,11 @@ const getNextInvoiceNo = () => {
 };
 const saveInvoiceNo = (num) => localStorage.setItem("invoice_counter", String(num));
 
-export default function InvoiceCreate() {
+// `bulkInvoice` / `onBulkRendered`: used only by Billing's bulk download, which mounts
+// this page off-screen per invoice and collects the PDF instead of saving it.
+export default function InvoiceCreate({ bulkInvoice = null, onBulkRendered = null } = {}) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const autoDownload = searchParams.get("autodownload");
   const invoiceDateInputRef = useRef(null);
@@ -260,11 +264,13 @@ export default function InvoiceCreate() {
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
-      // Check if opening a saved invoice from billing
-      const saved = localStorage.getItem("open_invoice");
+      // Check if opening a saved invoice from billing. Billing passes it in router
+      // state; "open_invoice" in localStorage is the legacy hand-off, still honoured.
+      const fromState = bulkInvoice || location.state?.openInvoice;
+      const saved = fromState || localStorage.getItem("open_invoice");
       if (saved) {
         try {
-          const data = JSON.parse(saved);
+          const data = typeof saved === "string" ? JSON.parse(saved) : { ...saved };
           // Ignore any stamp baked into a previously-saved invoice — old bills carry the
           // old stamp inside their JSON, and we don't want them to overwrite localStorage
           // (or the screen) with the outdated image. The current stamp loaded above by
@@ -381,16 +387,45 @@ export default function InvoiceCreate() {
   // Auto-download PDF when navigated from Billing with ?autodownload param
   const autoDownloadDone = useRef(false);
   useEffect(() => {
+    if (bulkInvoice) return;
     if (autoDownload && inv.invoice_no && !autoDownloadDone.current) {
       autoDownloadDone.current = true;
       // Wait for barcode and layout to fully render
       const timer = setTimeout(async () => {
-        await downloadPDF();
-        navigate("/billing", { replace: true });
+        try {
+          // The invoice already exists in Billing, so this is a pure download:
+          // don't re-save it locally or move the invoice counter.
+          await downloadPDF({ save: false });
+        } catch (err) {
+          console.error("Invoice PDF download failed", err);
+          alert("Could not download the invoice PDF. Please try again.");
+        } finally {
+          navigate("/billing", { replace: true });
+        }
       }, 500);
       return () => clearTimeout(timer);
     }
   }, [autoDownload, inv.invoice_no]);
+
+  // Bulk mode: render this invoice's PDF exactly like a normal download, but hand
+  // it back to Billing (as a Blob) instead of saving it.
+  const bulkDone = useRef(false);
+  useEffect(() => {
+    if (!bulkInvoice || !onBulkRendered || !inv.invoice_no || bulkDone.current) return;
+    // Wait for barcode, stamp and layout to render (same idea as the auto-download).
+    const timer = setTimeout(async () => {
+      if (bulkDone.current) return;
+      bulkDone.current = true;
+      try {
+        const result = await renderPDF({ save: false });
+        if (!result) throw new Error("Invoice could not be rendered");
+        onBulkRendered({ fileName: result.fileName, blob: result.pdf.output("blob") });
+      } catch (error) {
+        onBulkRendered({ error });
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [bulkInvoice, inv.invoice_no, stampImg]);
 
   const addRoute = () => {
     const val = newLocation.trim().toUpperCase();
@@ -529,7 +564,9 @@ export default function InvoiceCreate() {
       show_remark: inv.show_remark || Boolean(inv.remark),
       remark: inv.remark || "",
       payment_status: prev.payment_status || "NOTPAID",
-      invoice_data: JSON.stringify({ ...inv, stamp_image: stampImg }),
+      // No stamp here: it's ~340 KB of base64 per invoice, is never read back
+      // (the current stamp is always loaded fresh) and filled the storage quota.
+      invoice_data: JSON.stringify(inv),
     };
     if (idx >= 0) existing[idx] = entry;
     else existing.unshift(entry);
@@ -560,9 +597,19 @@ export default function InvoiceCreate() {
     input.click();
   };
 
-  const downloadPDF = async () => {
-    saveInvoiceNo(inv.invoice_no);
-    saveInvoiceToList();
+  // Builds the invoice PDF from the on-screen invoice; returns { pdf, fileName }.
+  // `save: false` is used by the Billing auto/bulk download (the invoice is already stored).
+  // downloadPDF is also an onClick handler, where the argument is the click event.
+  const renderPDF = async ({ save = true } = {}) => {
+    if (save) {
+      // A storage failure (e.g. quota exceeded) must never block the PDF itself.
+      try {
+        saveInvoiceNo(inv.invoice_no);
+        saveInvoiceToList();
+      } catch (err) {
+        console.warn("Could not save invoice to local storage", err);
+      }
+    }
     const el = invoiceRef.current;
     if (!el) return;
 
@@ -608,17 +655,19 @@ export default function InvoiceCreate() {
       replacements.push({ field, span });
     });
 
-    await new Promise((r) => setTimeout(r, 50));
-
-    const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#fff" });
-
-    // Restore original inputs
-    replacements.forEach(({ field, span }) => {
-      field.style.display = "";
-      span.remove();
-    });
-    if (servicePdfPreview) servicePdfPreview.remove();
-    if (serviceEditable) serviceEditable.style.display = "";
+    let canvas;
+    try {
+      await new Promise((r) => setTimeout(r, 50));
+      canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#fff" });
+    } finally {
+      // Restore original inputs even if capture fails, so the form stays usable.
+      replacements.forEach(({ field, span }) => {
+        field.style.display = "";
+        span.remove();
+      });
+      if (servicePdfPreview) servicePdfPreview.remove();
+      if (serviceEditable) serviceEditable.style.display = "";
+    }
 
     // JPEG @ 0.92 + compress drops file size from ~7 MB → ~200–400 KB
     // with no visible quality loss for invoice text/tables.
@@ -627,10 +676,18 @@ export default function InvoiceCreate() {
     const pdfW = pdf.internal.pageSize.getWidth();
     const pdfH = (canvas.height * pdfW) / canvas.width;
     pdf.addImage(imgData, "JPEG", 0, 0, pdfW, pdfH, undefined, "FAST");
+    // Free the large capture canvas right away (matters when many are generated in a row).
+    canvas.width = 0;
+    canvas.height = 0;
     const fileName = inv.is_monthly
       ? `${safeClientFileName}_${inv.invoice_no}.pdf`
       : `${safeRouteFileName}_${inv.invoice_no}_${dateStr || "draft"}.pdf`;
-    pdf.save(fileName);
+    return { pdf, fileName };
+  };
+
+  const downloadPDF = async (opts) => {
+    const result = await renderPDF(opts);
+    if (result) result.pdf.save(result.fileName);
   };
 
   const edt = {

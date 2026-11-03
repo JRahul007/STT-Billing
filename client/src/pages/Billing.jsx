@@ -1,9 +1,12 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import JsBarcode from "jsbarcode";
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 import html2canvas from "html2canvas";
+import { buildBillingReport, buildBillingXlsx, buildBillingPdf, buildZipBlob } from "./billingExport";
+import "./invoiceStorage";
+import InvoiceCreate from "./InvoiceCreate";
 import {
   getBillings,
   createBilling,
@@ -313,6 +316,12 @@ function normalizeLocations(entries) {
   return normalized;
 }
 
+// "2026-10-01" -> "01-10-2026" (for bulk download messages and the ZIP name)
+function fmtBulkDate(iso) {
+  const [y, m, d] = String(iso || "").split("-");
+  return y && m && d ? `${d}-${m}-${y}` : String(iso || "");
+}
+
 function saveLocationsToStorage(entries) {
   localStorage.setItem("billing_locations", JSON.stringify(entries));
 }
@@ -354,6 +363,15 @@ export default function Billing() {
   const [filterClient, setFilterClient] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [showExportPanel, setShowExportPanel] = useState(false);
+  // Bulk invoice download: date range + the running job ({ items, index, files, failed }).
+  const [bulkFrom, setBulkFrom] = useState("");
+  const [bulkTo, setBulkTo] = useState("");
+  const [bulkJob, setBulkJob] = useState(null);
+  // The off-screen invoice page gets the same width and (scrolled-to-top) position the
+  // real invoice page has, only shifted far left, so it lays out exactly like it (down to
+  // sub-pixel rounding) and the PDFs match single downloads.
+  const pageRootRef = useRef(null);
+  const [bulkHostBox, setBulkHostBox] = useState({ left: -20000, top: 0, width: 1100 });
 
   const ALL_COLUMNS = [
     { key: "invoice_no", label: "Invoice No.", numeric: false },
@@ -504,183 +522,37 @@ export default function Billing() {
     return { sorted, groups };
   };
 
-  const exportToPDF = () => {
-    const cols = selectedCols;
-    if (cols.length === 0) return alert("Please select at least one column to export.");
-    const doc = new jsPDF({ orientation: "landscape" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 14;
-    const numericCols = cols.filter((c) => c.numeric);
-    const filterLabel = getFilterLabel();
-    const genDate = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const EXPORT_TITLE = "Swati Tours & Transport";
+  // "Billing Data (October-2026)" -> "Billing Data October-2026" (as in the reference sheet)
+  const getExportSubtitle = () => getFilterLabel().replace(/[()]/g, "").replace(/\s+/g, " ").trim();
 
-    // --- Header ---
-    doc.setFillColor(26, 26, 46);
-    doc.rect(0, 0, pageWidth, 28, "F");
-    doc.setFontSize(18);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(255, 255, 255);
-    doc.text("SWATI TOURS & TRANSPORT", margin, 13);
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(200, 200, 220);
-    doc.text(filterLabel, margin, 22);
-    doc.text(genDate + "  |  Records: " + filteredBillings.length, pageWidth - margin, 22, { align: "right" });
-
-    // --- Table ---
+  const buildExportReport = () => {
     const { groups } = getGroupedBillings();
-    const head = [cols.map((c) => c.label)];
-    const body = [];
-    const groupStartRows = new Set();
-
-    groups.forEach((group) => {
-      groupStartRows.add(body.length);
-      group.items.forEach((b) => {
-        body.push(cols.map((c) => {
-          const val = getCellValue(b, c);
-          if (c.currency && typeof val === "number") return "Rs. " + val.toLocaleString("en-IN");
-          return String(val);
-        }));
-      });
+    return buildBillingReport({
+      groups,
+      cols: selectedCols,
+      getCellValue,
+      billings: filteredBillings,
+      extractLocation,
     });
+  };
 
-    const grandTotalIdx = body.length;
-    if (numericCols.length > 0) {
-      const totalsRow = cols.map((c) => {
-        if (c.numeric) {
-          const sum = filteredBillings.reduce((s, b) => s + (Number(b[c.key]) || 0), 0);
-          if (c.currency) return "Rs. " + sum.toLocaleString("en-IN");
-          return sum.toLocaleString("en-IN");
-        }
-        return "";
-      });
-      totalsRow[0] = totalsRow[0] || "TOTAL";
-      body.push(totalsRow);
-    }
-
-    autoTable(doc, {
-      head,
-      body,
-      startY: 32,
-      margin: { left: margin, right: margin },
-      tableWidth: "auto",
-      styles: {
-        fontSize: 8.5,
-        cellPadding: { top: 3.5, right: 5, bottom: 3.5, left: 5 },
-        lineWidth: 0.4,
-        lineColor: [50, 50, 50],
-        textColor: [30, 30, 30],
-        font: "helvetica",
-        overflow: "linebreak",
-      },
-      headStyles: {
-        fillColor: [67, 97, 238],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        fontSize: 8.5,
-        cellPadding: { top: 4, right: 5, bottom: 4, left: 5 },
-        halign: "center",
-        lineWidth: 0.4,
-        lineColor: [50, 50, 50],
-      },
-      columnStyles: cols.reduce((acc, c, i) => {
-        if (c.numeric) acc[i] = { halign: "right" };
-        return acc;
-      }, {}),
-      alternateRowStyles: { fillColor: [245, 246, 250] },
-      didDrawCell: (data) => {
-        if (data.section !== "body") return;
-        if (groupStartRows.has(data.row.index) && data.row.index > 0) {
-          doc.setDrawColor(0, 0, 0);
-          doc.setLineWidth(1.5);
-          doc.line(data.cell.x, data.cell.y, data.cell.x + data.cell.width, data.cell.y);
-        }
-      },
-      didParseCell: (data) => {
-        if (data.section !== "body") return;
-        if (data.row.index === grandTotalIdx) {
-          data.cell.styles.fontStyle = "bold";
-          data.cell.styles.fillColor = [26, 26, 46];
-          data.cell.styles.textColor = [255, 255, 255];
-          data.cell.styles.fontSize = 9;
-        }
-      },
-      didDrawPage: () => {
-        // Footer
-        doc.setFillColor(26, 26, 46);
-        doc.rect(0, pageHeight - 10, pageWidth, 10, "F");
-        doc.setFontSize(7.5);
-        doc.setTextColor(180, 180, 200);
-        doc.text("Swati Tours & Transport", margin, pageHeight - 4);
-        const pg = `Page ${doc.getCurrentPageInfo().pageNumber} of ${doc.getNumberOfPages()}`;
-        doc.text(pg, pageWidth - margin, pageHeight - 4, { align: "right" });
-      },
-    });
-
-    doc.save(`${filterLabel.replace(/ /g, "_")}.pdf`);
+  const exportToPDF = () => {
+    if (selectedCols.length === 0) return alert("Please select at least one column to export.");
+    const doc = buildBillingPdf(buildExportReport(), { title: EXPORT_TITLE, subtitle: getExportSubtitle() });
+    doc.save(`${getFilterLabel().replace(/ /g, "_")}.pdf`);
   };
 
   const exportToExcel = () => {
-    const cols = selectedCols;
-    if (cols.length === 0) return alert("Please select at least one column to export.");
-    const numericCols = cols.filter((c) => c.numeric);
-    const { groups } = getGroupedBillings();
-
-    const cellStyle = "border: 1px solid #000; padding: 6px 10px; font-size: 13px;";
-    const headerStyle = `${cellStyle} background: #4361ee; color: #fff; font-weight: bold; text-align: center;`;
-    const grandTotalStyle = `${cellStyle} background: #f0f0f0; font-weight: bold;`;
-
-    let tableHTML = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-<head><meta charset="utf-8">
-<style>td, th { mso-number-format:"\\@"; }</style>
-</head><body>
-<h2 style="font-family:Arial;">Swati Tours &amp; Transport</h2>
-<p style="font-family:Arial; color:#666;">${getFilterLabel()}</p>
-<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif;">
-<thead><tr>${cols.map((c) => `<th style="${headerStyle}">${c.label}</th>`).join("")}</tr></thead><tbody>`;
-
-    groups.forEach((group, gi) => {
-      group.items.forEach((b, bi) => {
-        // First row of a new date group gets a thick top border
-        const topBorder = gi > 0 && bi === 0 ? "border-top: 3px solid #000;" : "";
-        tableHTML += "<tr>";
-        cols.forEach((c) => {
-          const val = getCellValue(b, c);
-          const display = c.currency && typeof val === "number" ? `₹${val.toLocaleString("en-IN")}` : String(val);
-          const align = c.numeric ? "text-align: right;" : "";
-          tableHTML += `<td style="${cellStyle} ${topBorder} ${align}">${display}</td>`;
-        });
-        tableHTML += "</tr>";
-      });
-    });
-
-    // Grand total row
-    if (numericCols.length > 0) {
-      tableHTML += "<tr>";
-      cols.forEach((c, ci) => {
-        if (c.numeric) {
-          const sum = filteredBillings.reduce((s, b) => s + (Number(b[c.key]) || 0), 0);
-          const display = c.currency ? `₹${sum.toLocaleString("en-IN")}` : sum.toLocaleString("en-IN");
-          tableHTML += `<td style="${grandTotalStyle} text-align: right;">${display}</td>`;
-        } else if (ci === 0) {
-          tableHTML += `<td style="${grandTotalStyle}">TOTAL</td>`;
-        } else {
-          tableHTML += `<td style="${grandTotalStyle}"></td>`;
-        }
-      });
-      tableHTML += "</tr>";
-    }
-
-    tableHTML += "</tbody></table></body></html>";
-
-    const blob = new Blob([tableHTML], { type: "application/vnd.ms-excel;charset=utf-8;" });
+    if (selectedCols.length === 0) return alert("Please select at least one column to export.");
+    const blob = buildBillingXlsx(buildExportReport(), { title: EXPORT_TITLE, subtitle: getExportSubtitle() });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${getFilterLabel().replace(/ /g, "_")}.xls`;
+    a.download = `${getFilterLabel().replace(/ /g, "_")}.xlsx`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Release after the browser has picked up the download.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const resetLocationManager = () => {
@@ -1618,7 +1490,8 @@ export default function Billing() {
     pdf.save(`Invoice_${b.invoice_no}_${dateStr || "draft"}.pdf`);
   };
 
-  const handleDownloadInvoice = (b) => {
+  // Map a billing record to the invoice page's data (shared by single and bulk download).
+  const buildInvoiceData = (b) => {
     const parsed = parseLocation(b.location);
     const route = parsed.route || b.location || "";
     const clientName = parsed.client || "";
@@ -1641,7 +1514,7 @@ export default function Billing() {
     const ratePerKg = wt > 0 ? (weightAmt / wt) : 0;
 
     // Map billing data to InvoiceCreate format
-    const invoiceData = {
+    return {
       invoice_no: b.invoice_no || "",
       date: b.date ? b.date.split("T")[0] : "",
       route: route,
@@ -1676,13 +1549,101 @@ export default function Billing() {
       show_remark: b.show_remark || Boolean(b.remark),
       remark: b.remark || "",
     };
-
-    localStorage.setItem("open_invoice", JSON.stringify(invoiceData));
-    navigate("/invoice/create?autodownload=" + b.invoice_no);
   };
 
+  const handleDownloadInvoice = (b) => {
+    // Hand the invoice over in router state (memory), not localStorage, so a
+    // full storage quota can never block a download.
+    navigate("/invoice/create?autodownload=" + b.invoice_no, { state: { openInvoice: buildInvoiceData(b) } });
+  };
+
+  // ---- Bulk invoice download (date range → one ZIP of the usual invoice PDFs) ----
+  const startBulkDownload = async () => {
+    if (!bulkFrom || !bulkTo) return alert("Please select both From Date and To Date.");
+    if (bulkFrom > bulkTo) return alert("From Date must be on or before To Date.");
+    // Same date field and format the invoice itself uses (date portion of b.date).
+    const items = billings
+      .filter((b) => {
+        if (!b.invoice_no || !b.date) return false;
+        const d = String(b.date).split("T")[0];
+        return d >= bulkFrom && d <= bulkTo;
+      })
+      .sort((a, b) => String(a.date).localeCompare(String(b.date))
+        || String(a.invoice_no).localeCompare(String(b.invoice_no), undefined, { numeric: true }));
+    if (items.length === 0) {
+      return alert(`No invoices found between ${fmtBulkDate(bulkFrom)} and ${fmtBulkDate(bulkTo)}.`);
+    }
+    await getDefaultStamp(); // warm the stamp cache so every invoice renders with it
+    // Where a page sits inside .main-content when scrolled to the top. Width is the
+    // window-based width (Billing's wide table stretches .main-content, the invoice page doesn't).
+    const main = pageRootRef.current?.parentElement;
+    if (main) {
+      const r = main.getBoundingClientRect();
+      const cs = window.getComputedStyle(main);
+      const left = r.left + window.scrollX + (parseFloat(cs.paddingLeft) || 0);
+      const top = r.top + window.scrollY + (parseFloat(cs.paddingTop) || 0);
+      const width = document.documentElement.clientWidth - left - (parseFloat(cs.paddingRight) || 0);
+      setBulkHostBox({ left: left - 20000, top, width });
+    }
+    setBulkJob({ items, index: 0, files: [], failed: [] });
+  };
+
+  // Stable per invoice, so re-renders of this page don't restart the off-screen render.
+  const bulkInvoiceData = useMemo(
+    () => (bulkJob && bulkJob.index < bulkJob.items.length ? buildInvoiceData(bulkJob.items[bulkJob.index]) : null),
+    [bulkJob?.items, bulkJob?.index]
+  );
+
+  // Called by the off-screen invoice page once per invoice.
+  const handleBulkRendered = async ({ fileName, blob, error }) => {
+    let entry = null;
+    if (!error) {
+      try {
+        entry = [fileName, new Uint8Array(await blob.arrayBuffer())];
+      } catch (e) {
+        error = e;
+      }
+    }
+    setBulkJob((job) => {
+      if (!job) return job;
+      const current = job.items[job.index];
+      if (error) console.error(`Bulk download: invoice ${current?.invoice_no} failed`, error);
+      return {
+        ...job,
+        index: job.index + 1,
+        files: entry ? [...job.files, entry] : job.files,
+        failed: error ? [...job.failed, current?.invoice_no] : job.failed,
+      };
+    });
+  };
+
+  // When every invoice has been rendered, zip them up and download.
+  useEffect(() => {
+    if (!bulkJob || bulkJob.index < bulkJob.items.length) return;
+    const { files, failed } = bulkJob;
+    setBulkJob(null);
+    if (files.length > 0) {
+      // Same file name twice in one ZIP would overwrite on extract; number the repeats.
+      const seen = new Map();
+      const entries = files.map(([name, data]) => {
+        const n = (seen.get(name) || 0) + 1;
+        seen.set(name, n);
+        return [n === 1 ? name : name.replace(/\.pdf$/i, ` (${n}).pdf`), data];
+      });
+      const url = URL.createObjectURL(buildZipBlob(entries));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Invoices_${fmtBulkDate(bulkFrom)}_to_${fmtBulkDate(bulkTo)}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    if (failed.length > 0) {
+      alert(`${files.length} invoice(s) downloaded. Could not generate: ${failed.join(", ")}`);
+    }
+  }, [bulkJob]);
+
   return (
-    <div>
+    <div ref={pageRootRef}>
       <div className="page-header">
         <h1>Billing Details</h1>
         <button
@@ -1780,6 +1741,44 @@ export default function Billing() {
         </div>
       </div>
 
+      {/* Bulk Invoice Download */}
+      <div className="chart-card" style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <strong style={{ fontSize: 14 }}>Bulk Invoice Download</strong>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, fontWeight: 600 }}>From Date:</label>
+            <input type="date" value={bulkFrom} onChange={(e) => setBulkFrom(e.target.value)} disabled={!!bulkJob}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13 }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, fontWeight: 600 }}>To Date:</label>
+            <input type="date" value={bulkTo} onChange={(e) => setBulkTo(e.target.value)} disabled={!!bulkJob}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", fontSize: 13 }} />
+          </div>
+          <button className="btn btn-sm" style={{ background: "#7c3aed", color: "#fff" }} onClick={startBulkDownload} disabled={!!bulkJob}>
+            {bulkJob ? "Generating..." : "Download All Invoices (ZIP)"}
+          </button>
+          {bulkJob && (
+            <span style={{ fontSize: 13, color: "#555" }}>
+              Generating invoice {Math.min(bulkJob.index + 1, bulkJob.items.length)} of {bulkJob.items.length}... please keep this page open.
+            </span>
+          )}
+        </div>
+        {/* Off-screen: the real invoice page renders each invoice so the PDFs are identical to single
+            downloads. Portaled to <body> because the animated cards' transforms would otherwise
+            re-anchor `position: fixed`. */}
+        {bulkJob && bulkJob.index < bulkJob.items.length && createPortal(
+          <div aria-hidden="true" style={{ position: "fixed", ...bulkHostBox, pointerEvents: "none" }}>
+            <InvoiceCreate
+              key={bulkJob.index}
+              bulkInvoice={bulkInvoiceData}
+              onBulkRendered={handleBulkRendered}
+            />
+          </div>,
+          document.body
+        )}
+      </div>
+
       {/* Export Section */}
       <div className="chart-card" style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1856,8 +1855,7 @@ export default function Billing() {
                   <td><strong style={{ color: "#4361ee", cursor: "pointer", textDecoration: "underline" }}
                     onClick={() => {
                       if (b.invoice_data) {
-                        localStorage.setItem("open_invoice", b.invoice_data);
-                        navigate("/invoice/create?open=" + b.invoice_no);
+                        navigate("/invoice/create?open=" + b.invoice_no, { state: { openInvoice: b.invoice_data } });
                       } else {
                         generateInvoice(b);
                       }
