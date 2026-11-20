@@ -68,4 +68,10 @@ export const updateVehicle = (id, data) => api.put(`/vehicles/${id}`, data);
 export const upsertVehicleByInvoice = (invoiceNo, data) => api.put(`/vehicles/upsert/${encodeURIComponent(invoiceNo)}`, data);
 export const deleteVehicle = (id) => api.delete(`/vehicles/${id}`);
 
+// Vehicle clients master (Vehicle → Manage Clients)
+export const getVehicleClients = () => api.get("/vehicle-clients");
+export const createVehicleClient = (data) => api.post("/vehicle-clients", data);
+export const updateVehicleClient = (id, data) => api.put(`/vehicle-clients/${id}`, data);
+export const deleteVehicleClient = (id) => api.delete(`/vehicle-clients/${id}`);
+
 export default api;

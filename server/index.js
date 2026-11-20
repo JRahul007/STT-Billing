@@ -8,6 +8,7 @@ const dashboardRoutes = require("./routes/dashboard");
 const billingRoutes = require("./routes/billings");
 const partyRoutes = require("./routes/parties");
 const vehicleRoutes = require("./routes/vehicles");
+const vehicleClientRoutes = require("./routes/vehicleClients");
 const { authMiddleware } = require("./middleware/auth");
 
 const app = express();
@@ -25,6 +26,7 @@ app.use("/api/dashboard", authMiddleware, dashboardRoutes);
 app.use("/api/billings", authMiddleware, billingRoutes);
 app.use("/api/parties", authMiddleware, partyRoutes);
 app.use("/api/vehicles", authMiddleware, vehicleRoutes);
+app.use("/api/vehicle-clients", authMiddleware, vehicleClientRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

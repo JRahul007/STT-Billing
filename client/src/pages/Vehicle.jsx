@@ -3,10 +3,15 @@ import JsBarcode from "jsbarcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { getDefaultStamp } from "../defaultStamp";
-import { getVehicles, createVehicle, updateVehicle, upsertVehicleByInvoice, deleteVehicle } from "../services/api";
+import {
+  getVehicles, createVehicle, updateVehicle, upsertVehicleByInvoice, deleteVehicle,
+  getVehicleClients, createVehicleClient, updateVehicleClient, deleteVehicleClient,
+} from "../services/api";
 
 const STORAGE_KEY = "vehicle_entries";
 const CLIENTS_STORAGE_KEY = "vehicle_clients";
+// Set once this browser's old CLIENTS_STORAGE_KEY list has been uploaded to the server.
+const CLIENTS_MIGRATED_KEY = "vehicle_clients_migrated";
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const emptyClientForm = { id: null, name: "", contact: "", address: "", gstin: "", email: "" };
@@ -224,9 +229,15 @@ export default function Vehicle() {
   const [currentPage, setCurrentPage] = useState(1);
 
   // --- Vehicle clients master (separate from vehicle entries) ---
+  // Stored in Supabase (table vehicle_clients) via /api/vehicle-clients; the server is
+  // the source of truth. CLIENTS_STORAGE_KEY only holds clients from older builds; they
+  // are uploaded once (see migrateLocalClients) and the local copy is left as is.
   const [clients, setClients] = useState([]);
   const [showClientModal, setShowClientModal] = useState(false);
   const [clientForm, setClientForm] = useState(emptyClientForm);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientBusy, setClientBusy] = useState(null); // "save" | client id being deleted | null
+  const [clientMsg, setClientMsg] = useState(null); // { type: "success" | "error", text }
 
   // Load: prefer Supabase, fall back to localStorage. Any local-only rows that
   // aren't yet on the server are merged in so the UI keeps showing them; they
@@ -252,25 +263,61 @@ export default function Vehicle() {
     }
   };
 
+  const apiErrorText = (e) => e?.response?.data?.error || e?.message || "Unknown error";
+
+  // Clients saved in this browser by older builds: upload any the server doesn't have
+  // yet (insert only, never overwriting server rows). The local copy is left untouched;
+  // a separate marker records that the upload is done, so clients deleted later aren't
+  // re-uploaded from it.
+  const migrateLocalClients = async (serverList) => {
+    if (localStorage.getItem(CLIENTS_MIGRATED_KEY)) return false;
+    let local = [];
+    try {
+      const saved = JSON.parse(localStorage.getItem(CLIENTS_STORAGE_KEY) || "[]");
+      local = Array.isArray(saved) ? saved : [];
+    } catch { local = []; }
+    if (local.length === 0) return false;
+    const known = new Set(serverList.map((c) => (c.name || "").trim().toLowerCase()));
+    let uploaded = false;
+    let allDone = true;
+    for (const c of local) {
+      const name = (c?.name || "").trim();
+      if (!name || known.has(name.toLowerCase())) continue;
+      try {
+        await createVehicleClient({ name, contact: c.contact, address: c.address, gstin: c.gstin, email: c.email });
+        known.add(name.toLowerCase());
+        uploaded = true;
+      } catch (e) {
+        if (e?.response?.status === 409) { known.add(name.toLowerCase()); continue; } // already there
+        allDone = false;
+      }
+    }
+    if (allDone) localStorage.setItem(CLIENTS_MIGRATED_KEY, new Date().toISOString());
+    return uploaded;
+  };
+
+  const loadClients = async () => {
+    setClientsLoading(true);
+    try {
+      let list = (await getVehicleClients()).data || [];
+      if (await migrateLocalClients(list)) list = (await getVehicleClients()).data || [];
+      setClients(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setClientMsg({ type: "error", text: `Could not load clients: ${apiErrorText(e)}` });
+    } finally {
+      setClientsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadEntries();
-    try {
-      const savedClients = JSON.parse(localStorage.getItem(CLIENTS_STORAGE_KEY) || "[]");
-      setClients(Array.isArray(savedClients) ? savedClients : []);
-    } catch {
-      setClients([]);
-    }
+    loadClients();
   }, []);
 
   // Mirror writes to localStorage so the offline fallback stays current.
   const saveAll = (list) => {
     setEntries(list);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  };
-
-  const saveClients = (list) => {
-    setClients(list);
-    localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(list));
   };
 
   // Look up a client record by its name (case-insensitive). Used to enrich the PDF
@@ -283,11 +330,14 @@ export default function Vehicle() {
 
   const openClientManager = () => {
     setClientForm(emptyClientForm);
+    setClientMsg(null);
     setShowClientModal(true);
+    loadClients(); // pick up changes made on other devices
   };
 
-  const handleClientSubmit = (e) => {
+  const handleClientSubmit = async (e) => {
     e.preventDefault();
+    if (clientBusy) return;
     const name = (clientForm.name || "").trim();
     if (!name) {
       alert("Client name is required.");
@@ -301,29 +351,28 @@ export default function Vehicle() {
       alert("A client with this name already exists.");
       return;
     }
-    if (clientForm.id) {
-      const updated = clients.map((c) => (c.id === clientForm.id
-        ? {
-            ...c, name,
-            contact: clientForm.contact || "",
-            address: clientForm.address || "",
-            gstin:   (clientForm.gstin   || "").toUpperCase(),
-            email:   clientForm.email   || "",
-          }
-        : c));
-      saveClients(updated);
-    } else {
-      const newClient = {
-        id: Date.now(),
-        name,
-        contact: clientForm.contact || "",
-        address: clientForm.address || "",
-        gstin:   (clientForm.gstin   || "").toUpperCase(),
-        email:   clientForm.email   || "",
-      };
-      saveClients([newClient, ...clients]);
+    const payload = {
+      name,
+      contact: clientForm.contact || "",
+      address: clientForm.address || "",
+      gstin:   (clientForm.gstin   || "").toUpperCase(),
+      email:   clientForm.email   || "",
+    };
+    const editing = Boolean(clientForm.id);
+    setClientBusy("save");
+    setClientMsg(null);
+    try {
+      if (editing) await updateVehicleClient(clientForm.id, payload);
+      else await createVehicleClient(payload);
+      setClientForm(emptyClientForm);
+      await loadClients();
+      setClientMsg({ type: "success", text: editing ? `Client "${name}" updated.` : `Client "${name}" added.` });
+    } catch (err) {
+      setClientMsg({ type: "error", text: `Could not ${editing ? "update" : "add"} client: ${apiErrorText(err)}` });
+      if (err?.response?.status === 404) loadClients(); // deleted elsewhere
+    } finally {
+      setClientBusy(null);
     }
-    setClientForm(emptyClientForm);
   };
 
   const handleClientEdit = (client) => {
@@ -337,10 +386,27 @@ export default function Vehicle() {
     });
   };
 
-  const handleClientDelete = (id) => {
+  const handleClientDelete = async (id) => {
+    if (clientBusy) return;
     if (!window.confirm("Delete this client? Existing vehicle entries that used this client will keep the name on file.")) return;
-    saveClients(clients.filter((c) => c.id !== id));
-    if (clientForm.id === id) setClientForm(emptyClientForm);
+    const name = clients.find((c) => c.id === id)?.name || "";
+    setClientBusy(id);
+    setClientMsg(null);
+    try {
+      await deleteVehicleClient(id);
+      if (clientForm.id === id) setClientForm(emptyClientForm);
+      await loadClients();
+      setClientMsg({ type: "success", text: `Client "${name}" deleted.` });
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        await loadClients(); // already removed elsewhere
+        setClientMsg({ type: "success", text: `Client "${name}" was already deleted.` });
+      } else {
+        setClientMsg({ type: "error", text: `Could not delete client: ${apiErrorText(err)}` });
+      }
+    } finally {
+      setClientBusy(null);
+    }
   };
 
   const handleChange = (field, value) => {
@@ -1293,6 +1359,18 @@ export default function Vehicle() {
               </button>
             </div>
 
+            {clientMsg && (
+              <div role={clientMsg.type === "error" ? "alert" : "status"}
+                style={{
+                  marginBottom: 12, padding: "8px 12px", borderRadius: 8, fontSize: 12.5,
+                  background: clientMsg.type === "error" ? "#fef2f2" : "#f0fdf4",
+                  border: `1px solid ${clientMsg.type === "error" ? "#fecaca" : "#bbf7d0"}`,
+                  color: clientMsg.type === "error" ? "#b91c1c" : "#15803d",
+                }}>
+                {clientMsg.text}
+              </div>
+            )}
+
             {/* Add / Edit form */}
             <form onSubmit={handleClientSubmit} style={{ background: "#f8faff", border: "1px solid #dbe3f3", borderRadius: 10, padding: 14, marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>
@@ -1361,13 +1439,15 @@ export default function Vehicle() {
                 {clientForm.id && (
                   <button type="button" className="btn btn-sm btn-secondary"
                     style={{ padding: "6px 14px", fontSize: 12, borderRadius: 6 }}
+                    disabled={clientBusy === "save"}
                     onClick={() => setClientForm(emptyClientForm)}>
                     Cancel Edit
                   </button>
                 )}
                 <button type="submit" className="btn btn-primary"
-                  style={{ padding: "6px 16px", fontSize: 13, borderRadius: 6 }}>
-                  {clientForm.id ? "Update Client" : "+ Add Client"}
+                  style={{ padding: "6px 16px", fontSize: 13, borderRadius: 6 }}
+                  disabled={!!clientBusy}>
+                  {clientBusy === "save" ? "Saving..." : clientForm.id ? "Update Client" : "+ Add Client"}
                 </button>
               </div>
             </form>
@@ -1376,9 +1456,14 @@ export default function Vehicle() {
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
                 Saved Clients ({clients.length})
+                {clientsLoading && <span style={{ fontWeight: 500, textTransform: "none", color: "#94a3b8", marginLeft: 8 }}>Loading...</span>}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "40vh", overflowY: "auto" }}>
-                {clients.length === 0 ? (
+                {clients.length === 0 && clientsLoading ? (
+                  <div style={{ fontSize: 13, color: "#94a3b8", padding: "20px 0", textAlign: "center" }}>
+                    Loading clients...
+                  </div>
+                ) : clients.length === 0 ? (
                   <div style={{ fontSize: 13, color: "#94a3b8", padding: "20px 0", textAlign: "center" }}>
                     No clients yet. Add one above to get started.
                   </div>
@@ -1396,10 +1481,12 @@ export default function Vehicle() {
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                         <button type="button" className="btn btn-sm btn-secondary"
                           style={{ padding: "4px 10px", fontSize: 11, borderRadius: 6 }}
+                          disabled={!!clientBusy}
                           onClick={() => handleClientEdit(c)}>Edit</button>
                         <button type="button" className="btn btn-sm btn-danger"
                           style={{ padding: "4px 10px", fontSize: 11, borderRadius: 6 }}
-                          onClick={() => handleClientDelete(c.id)}>Delete</button>
+                          disabled={!!clientBusy}
+                          onClick={() => handleClientDelete(c.id)}>{clientBusy === c.id ? "Deleting..." : "Delete"}</button>
                       </div>
                     </div>
                   ))
